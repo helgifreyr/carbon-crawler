@@ -33,6 +33,7 @@ class Stage:
         self.focus = None
         self.level = None
         self.statics, self.walls, self.torches, self.gates = [], [], [], {}
+        self.gate_open_y = GATE_LIFT_M
         self.wall_params = []
         self.light = None
         self.unlit = []
@@ -69,13 +70,17 @@ class Stage:
             self.add_static(torch)
             self.torches.append([torch, None])
         yaws = level.features.get("gate_yaws")
+        # Dungeon portcullises rise into the wall above the door; in a cave there is nothing above, so they sink.
+        self.gate_open_y = -GATE_LIFT_M - 0.4 if level.features.get("tileset") == "caves" else GATE_LIFT_M
         for i, (x0, z0, x1, z1) in enumerate(level.gates):
             gate = self.placeable("gate")
             gate.translation = ((x0 + x1) / 2, 0.0, (z0 + z1) / 2)
             if yaws:
-                # An arena's gates are one cell wide, half the portcullis model's span.
+                # An arena's gates span one cell, half the portcullis model; scaling applies along the world's axes
+                # after rotation, so it goes on whichever axis the turned gate spans.
                 gate.rotation = axis_quat((0.0, 1.0, 0.0), yaws[i])
-                gate.scaling = (1.0, 1.0, (z1 - z0) / 4.0)
+                span = max(x1 - x0, z1 - z0) / 4.0
+                gate.scaling = (1.0, 1.0, span) if z1 - z0 > x1 - x0 else (span, 1.0, 1.0)
             self.add_static(gate)
             self.gates[world.GATE_BASE + i] = [gate, 0.0]
 
@@ -127,7 +132,7 @@ class Stage:
         self.clock += dt
         self.relight()
         for gate_id, entry in self.gates.items():
-            target = 0.0 if gate_id in world.shut_gates else GATE_LIFT_M
+            target = 0.0 if gate_id in world.shut_gates else self.gate_open_y
             if entry[1] != target:
                 step = (GATE_RISE if target > entry[1] else GATE_FALL) * dt
                 entry[1] = min(target, entry[1] + step) if target > entry[1] else max(target, entry[1] - step)

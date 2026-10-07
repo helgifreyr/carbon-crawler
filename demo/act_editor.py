@@ -35,8 +35,8 @@ SIZE_STEP = 50
 REPEATS = [[1, 1], [1, 2], [2, 3], [3, 4]]
 CHANCES = [1.0, 0.7, 0.5, 0.3]
 TEXT = (0.9, 0.93, 1.0, 1.0)
-HELP = ("drag nodes  N new  Del delete  T type  [ ] size  R repeat  H chance  C connect (click another: link, branch, "
-        "none)  L layer  PgUp/PgDn seeds  click a map: pick it  P play it  F2 save  Esc quit")
+HELP = ("drag nodes  N new  Del delete  T type  [ ] size  R repeat  H chance  C link (click another: link, branch, none)  "
+        "X cut (click another)  L layer  PgUp/PgDn seeds  click a map: pick it  P play it  F2 save  Esc quit")
 
 
 def end(proc, wait_s=5):
@@ -123,7 +123,8 @@ class Editor:
         jobs.recurring.append(job)
         self.job = job
         self.seed_base, self.picked, self.layer = 1, 0, 0
-        self.selected, self.connecting, self.drag, self.mouse = None, False, None, (0, 0)
+        # connecting is None, "link" (C: the next node clicked cycles link, branch, none) or "cut" (X: removes it).
+        self.selected, self.connecting, self.drag, self.mouse = None, None, None, (0, 0)
         self.procs, self.results, self.errors = {}, {}, {}
         self.regenerate_at, self.saved, self.status = 0.0, True, ""
         self.play_procs = []
@@ -244,6 +245,9 @@ class Editor:
                 return
         edges.append([a, b])
 
+    def cut_edge(self, a, b):
+        self.tmpl["edges"] = [e for e in self.tmpl["edges"] if {e[0], e[1]} != {a, b}]
+
     def add_node(self, px, py):
         x, y, w, h = self.areas()["graph"]
         k = 1
@@ -309,7 +313,7 @@ class Editor:
         shutil.copy(self.work_template, play_template)
         script = os.path.join(ROOT, "run_demo.ps1")
         env = dict(os.environ, ARPG_MODE="act", ARPG_ACT=play_template, ARPG_SEED=str(seed), NET_PORT=str(PLAY_PORT),
-                   NET_HOST="127.0.0.1", PYTHONUNBUFFERED="1")
+                   NET_HOST="127.0.0.1", ARPG_JOIN="127.0.0.1:%d" % PLAY_PORT, PYTHONUNBUFFERED="1")
         for target, run_name in zip(("arpg_server.py", "arpg_client.py"), PLAY_RUNS):
             self.play_procs.append(subprocess.Popen(
                 ["pwsh", "-NoProfile", "-File", script, "-Script", os.path.join(HERE, target), "-RunName", run_name],
@@ -325,14 +329,17 @@ class Editor:
         if gx <= x <= gx + gw and gy <= y <= gy + gh:
             hit = self.node_at(x, y)
             if self.connecting and hit and self.selected and hit != self.selected:
-                self.toggle_edge(self.selected, hit)
-                self.connecting = False
+                if self.connecting == "cut":
+                    self.cut_edge(self.selected, hit)
+                else:
+                    self.toggle_edge(self.selected, hit)
+                self.connecting = None
                 self.changed()
             elif hit:
                 self.selected, self.drag = hit, hit
                 self.graph_dirty = True
             else:
-                self.selected, self.connecting = None, False
+                self.selected, self.connecting = None, None
                 self.graph_dirty = True
             return
         for k, rect in enumerate(self.preview_rects()):
@@ -357,8 +364,9 @@ class Editor:
         elif key == ord("N"):
             self.add_node(*self.mouse)
             self.changed()
-        elif key == ord("C") and self.selected:
-            self.connecting = not self.connecting
+        elif key in (ord("C"), ord("X")) and self.selected:
+            mode = "link" if key == ord("C") else "cut"
+            self.connecting = None if self.connecting == mode else mode
             self.graph_dirty = True
         elif key == ord("L"):
             self.layer = (self.layer + 1) % len(draw.LAYERS)
@@ -429,7 +437,8 @@ class Editor:
                      ("%s: %s, %d-%d cells%s%s" % (n["id"], n["type"], n["size"][0], n["size"][1],
                                                      ", repeat %d-%d" % tuple(n["repeat"]) if n.get("repeat") else "",
                                                      ", chance %d%%" % (n["chance"] * 100) if "chance" in n else ""))
-                     if n else "no node selected", "connecting: click the node to link" if self.connecting else "",
+                     if n else "no node selected",
+                     {"link": "C: click a node to link it", "cut": "X: click a node to cut its link"}.get(self.connecting, ""),
                      self.status, ""]
         title = self.lines[0]
         title.set("ACT EDITOR")
@@ -449,7 +458,9 @@ class Editor:
                  90: lambda: (self.on_mouse_move(300, 650), self.on_key_down(ord("N"), 0)),
                  100: lambda: self.on_key_down(ord("C"), 0),
                  110: lambda: self.on_mouse_down(MOUSE_LEFT, *self.node_screen("deeps")),
-                 120: lambda: (setattr(self, "selected", "hoard"), self.on_key_down(VK["delete"], 0))}
+                 120: lambda: (setattr(self, "selected", "hoard"), self.on_key_down(VK["delete"], 0)),
+                 130: lambda: setattr(self, "selected", "grotto"), 135: lambda: self.on_key_down(ord("X"), 0),
+                 140: lambda: self.on_mouse_down(MOUSE_LEFT, *self.node_screen("pit"))}
         if os.environ.get("EDITOR_TEST_PLAY") == "1":
             steps = {60: lambda: self.on_key_down(ord("P"), 0)}
         if frame in steps:

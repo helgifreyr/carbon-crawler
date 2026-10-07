@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 # Tests and captures run muted; set ARPG_AUDIO=1 to hear them.
 export ARPG_AUDIO=${ARPG_AUDIO:-0}
 export NET_PORT=${NET_PORT:-47410}
+# Clients join the test server directly instead of showing the menu.
+export ARPG_JOIN=127.0.0.1:$NET_PORT
 export ARPG_MODE=${ARPG_MODE:-sandbox}
 ROOT="$(cygpath -w "$PWD")"
 BOTS=${1:-2}

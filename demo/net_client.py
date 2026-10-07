@@ -39,9 +39,40 @@ class ClientPark(destiny.Ballpark):
         self.owner.after_tick()
 
 
+def probe(host, port, timeout_ms=1500):
+    """A server's info, asked for without joining (call from a tasklet); None if nothing answers."""
+    try:
+        sock = netproto.connect(host, port)
+    except OSError:
+        return None
+    replies = []
+    peer = netproto.Peer(sock, lambda p, message: replies.append(message) if message[0] == "info" else None)
+    peer.send(("info",))
+    waited = 0
+    while not replies and peer.alive and waited < timeout_ms:
+        blue.synchro.SleepWallclock(50)
+        waited += 50
+    peer.close()
+    return replies[0][1] if replies else None
+
+
 class NetClient:
-    def __init__(self, host="127.0.0.1", port=netproto.DEFAULT_PORT):
-        self.host, self.port = host, port
+    """A Destiny client of one server; connect() starts a fresh session, and autoconnect starts one right away.
+
+    With join, the client asks to play once connected; without, it only asks the server for its info."""
+
+    def __init__(self, host="127.0.0.1", port=netproto.DEFAULT_PORT, autoconnect=True, join=True):
+        self.host, self.port, self.join = host, port, join
+        self.timer = TickTimer()
+        self.rtt_ms = Samples(200)
+        self.tick_listeners = []
+        self.message_listeners = []
+        self.failed = False
+        self._reset_session()
+        if autoconnect:
+            carbonapp.spawn(self._run)
+
+    def _reset_session(self):
         self.park = ClientPark()
         self.park.owner = self
         self.sync = ClientSync(park=self.park, on_set_state=self._on_set_state, on_desync=self._on_desync)
@@ -50,18 +81,29 @@ class NetClient:
         self.tick_ms = None
         self.world = {}
         self.pending_probes = {}
-        self.timer = TickTimer()
-        self.rtt_ms = Samples(200)
         self.lead_window = (None, None)
         self._last_steer = 0
         self._window_min_lead = None
         self.stats = {"rewinds": 0, "probes": 0, "probe_max_err": 0.0, "probe_missing": 0, "probe_late": 0,
                       "desyncs": 0, "adjust_slower": 0, "adjust_faster": 0, "lead": None, "set_states": 0}
         self._refresh_after_tick = False
-        self.tick_listeners = []
-        self.message_listeners = []
         self._wrap_rewind_counter()
-        carbonapp.spawn(self._run)
+
+    def connect(self, host, port, attempts=None):
+        """Drops any session and starts a new one with host:port, giving up (failed) after attempts tries."""
+        self.disconnect()
+        self.host, self.port, self.failed = host, port, False
+        self._reset_session()
+        carbonapp.spawn(self._run, 1000, attempts)
+
+    def disconnect(self):
+        if self.peer is not None:
+            self.peer.close()
+
+    @property
+    def lost(self):
+        """True once a session's connection has closed."""
+        return self.peer is not None and not self.peer.alive
 
     @property
     def connected(self):
@@ -85,19 +127,29 @@ class NetClient:
 
         self.sync.ticker.synchronize_to_simulation_time = counted
 
-    def _run(self, retry_ms=1000):
+    def _run(self, retry_ms=1000, attempts=None):
         self.connect_attempts = 0
+        host, port = self.host, self.port
         while True:
             try:
-                sock = netproto.connect(self.host, self.port)
+                sock = netproto.connect(host, port)
                 break
             except (ConnectionRefusedError, TimeoutError, OSError):
                 self.connect_attempts += 1
+                if attempts and self.connect_attempts >= attempts:
+                    self.failed = True
+                    return
                 if self.connect_attempts == 1:
-                    print("[client] no server at %s:%d yet - retrying every %.0f s" % (self.host, self.port, retry_ms / 1000.0))
+                    print("[client] no server at %s:%d yet - retrying every %.0f s" % (host, port, retry_ms / 1000.0))
                 blue.synchro.SleepWallclock(retry_ms)
-        print("[client] connected to %s:%d" % (self.host, self.port))
+        if (host, port) != (self.host, self.port):
+            # A newer connect() replaced this one while it was trying.
+            sock.close()
+            return
+        print("[client] connected to %s:%d" % (host, port))
         self.peer = netproto.Peer(sock, self._on_message, lambda p: print("[client] disconnected"))
+        if self.join:
+            self.send("join")
         carbonapp.spawn(self._ping_loop)
 
     def _ping_loop(self):

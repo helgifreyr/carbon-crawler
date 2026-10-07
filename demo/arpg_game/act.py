@@ -36,7 +36,16 @@ class Act:
         return world.LEVEL.features
 
     def arrival(self):
-        """Where players appear: the last checkpoint reached."""
+        """Where players appear: the last checkpoint reached (ARPG_TEST_ARRIVE=gate: beside the first arena gate)."""
+        if os.environ.get("ARPG_TEST_ARRIVE") == "gate" and world.GATES:
+            # Three metres off the middle of the widest gate, on whichever side is open floor.
+            x0, z0, x1, z1 = max(world.GATES, key=lambda g: sum(1 for h in world.GATES if abs(h[0] - g[0]) < 0.1
+                                                                or abs(h[1] - g[1]) < 0.1))
+            cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
+            for dx, dz in ((3, 0), (-3, 0), (0, 3), (0, -3)) if x1 - x0 < z1 - z0 else ((0, 3), (0, -3), (3, 0), (-3, 0)):
+                if world.LEVEL.cells.floor_at(cx + dx, cz + dz):
+                    return cx + dx, cz + dz
+            return cx, cz
         return tuple(self.features["checkpoints"][self.checkpoint])
 
     def start(self):
@@ -51,9 +60,11 @@ class Act:
         for k, pack in enumerate(feats["packs"]):
             packs.spawn(g, k, pack)
         self.rewarded = set()
-        self.arenas = [{"spec": spec, "cells": {tuple(c) for c in spec["cells"]}, "state": "idle", "wave": 0, "eids": []}
+        self.arenas = [{"spec": spec, "cells": {tuple(c) for c in spec["cells"]},
+                        "deep": {tuple(c) for c in spec.get("deep", spec["cells"])}, "state": "idle", "wave": 0, "eids": []}
                        for spec in feats.get("arenas", [])]
-        self.set_gates(list(world.gate_ids()), open_=True, quiet=True)
+        if os.environ.get("ARPG_TEST_SEAL") != "1":
+            self.set_gates(list(world.gate_ids()), open_=True, quiet=True)
         boss_pack = {"at": tuple(feats["boss"]), "kinds": ["warlord"] + ["imp"] * 4}
         eids = packs.spawn(self.g, len(feats["packs"]), boss_pack, leash=0)
         self.boss = eids[0] if eids else None
@@ -87,15 +98,15 @@ class Act:
             g.state.event("game", "gate", gate=gate_ids[0], open=open_)
         world.sync_gates(g.park)
 
-    def inside(self, arena, p):
-        return world.LEVEL.cells.cell_of(p.x, p.z) in arena["cells"]
+    def inside(self, arena, p, deep=False):
+        return world.LEVEL.cells.cell_of(p.x, p.z) in arena["deep" if deep else "cells"]
 
     def update_arenas(self, alive):
         g = self.g
         for arena in self.arenas:
             gate_ids = [world.GATE_BASE + k for k in arena["spec"]["gates"]]
             if arena["state"] == "idle":
-                if alive and all(self.inside(arena, p) for p in alive):
+                if alive and all(self.inside(arena, p, deep=True) for p in alive):
                     self.set_gates(gate_ids, open_=False)
                     arena["state"], arena["wave"] = "fight", 0
                     g.state.event("game", "arena", wave=1)

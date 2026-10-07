@@ -46,8 +46,8 @@ def position_at(history, render_tick, fallback):
 class NetSim:
     """Same interface as sim.Sim, but the Ballpark is a network client of net_server."""
 
-    def __init__(self, host, port):
-        self.client = NetClient(host, port)
+    def __init__(self, host, port, autoconnect=True):
+        self.client = NetClient(host, port, autoconnect=autoconnect)
         self.client.tick_listeners.append(self._on_tick)
         self.tracked_by_id = {}
         self.goto_marker = None

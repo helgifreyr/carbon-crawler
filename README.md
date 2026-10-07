@@ -49,11 +49,14 @@ py -3.12 tools/make_arpg_audio.py   # synthesizes the game's sounds and music in
 ## Play
 
 ```bat
-run_arpg_server.cmd
-run_arpg_client.cmd                 (once per player)
-run_arpg_client.cmd companion 2     (you plus two AI mages)
-set NET_HOST=<server ip>            (on another machine, before starting the client)
+run_arpg_client.cmd                 (the main menu: host a game here, or join one from the server list)
+run_arpg_server.cmd                 (a server on its own, for others to join)
+run_arpg_client.cmd companion 2     (also starts two AI mages, who join the server on this machine)
+set ARPG_JOIN=<server ip>:47400     (before starting the client: skip the menu and join that server)
 ```
+
+The server list probes each server for its act and player count; add one by typing its address (`host` or
+`host:port`), and hover one and press Delete to forget it. Esc in a game has "Leave game" to get back to the list.
 
 | Key | Action |
 |---|---|

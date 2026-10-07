@@ -33,7 +33,7 @@ def line(img, a, b, color, width=2.0, dashed=False):
         disc(img, a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, width / 2, color)
 
 
-def graph_image(w, h, nodes, edges, positions, selected=None, connecting=False):
+def graph_image(w, h, nodes, edges, positions, selected=None, connecting=None):
     """The template's graph: edges (dashed for branches), nodes as discs sized by their area, the selection ringed."""
     img = blank(w, h, (18, 20, 30))
     for a, b, kind in edges:
@@ -44,7 +44,7 @@ def graph_image(w, h, nodes, edges, positions, selected=None, connecting=False):
         x, y = positions[node["id"]]
         r = 10 + (sum(node["size"]) / 2) ** 0.5 * 0.6
         if node["id"] == selected:
-            disc(img, x, y, r + 5, (255, 120, 255) if connecting else (255, 255, 255))
+            disc(img, x, y, r + 5, {"link": (255, 120, 255), "cut": (255, 70, 60)}.get(connecting, (255, 255, 255)))
         disc(img, x, y, r, TYPE_COLORS.get(node["type"], (200, 200, 200)))
     return img
 

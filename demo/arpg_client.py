@@ -15,6 +15,7 @@ import arpg_world as world
 import carbonapp
 from arpg_state import ClientState, mana_at
 from arpg_audio import ArpgAudio
+from arpg_front import FrontEnd
 from arpg_view.actors import Actors
 from arpg_view.effects import Effects
 from arpg_view.events import Event, EventBus
@@ -63,8 +64,8 @@ PREDICTED, PREDICTED_CLIP = ("cast", "nova", "blink", "frost", "roll", "jump"), 
 
 
 class ArpgSim(NetSim):
-    def __init__(self, host, port):
-        super().__init__(host, port)
+    def __init__(self, host, port, autoconnect=True):
+        super().__init__(host, port, autoconnect)
         self.client.message_listeners.append(self._on_message)
         self.kills, self.enemies_alive = {}, 0
         self.state = ClientState(collect_events=True)
@@ -134,6 +135,20 @@ class ArpgSim(NetSim):
             self.state.receive(message)
         elif kind == "ack":
             self.predictor.on_ack(message[1], message[2])
+
+    def connect(self, host, port, attempts=None):
+        """A new session with host:port: everything the last one knew is dropped."""
+        self.client.connect(host, port, attempts)
+        self.tracked_by_id = {}
+        self.kills, self.enemies_alive = {}, 0
+        self.state = ClientState(collect_events=True)
+        self._render_tick, self._last_frame_time, self.ticked = None, None, False
+        self.predictor.park, self.predictor.ready = None, False
+        self.predictor.reset()
+        self._was_dead = False
+
+    def leave(self):
+        self.client.disconnect()
 
     def change_level(self, payload):
         """A new act: new walls for every park here, and the prediction's world rebuilt from scratch."""
@@ -357,11 +372,13 @@ class ArpgViewer(TrinityViewer):
         # Added first so it draws over every other menu sprite.
         self.pointer = Picture(trinity, self.menus, "cursor", 64)
         self.pointer_hot = load_hotspot()
+        # Next, so the menu and loading screens cover every other HUD sprite.
+        self.front = FrontEnd(trinity, self.menus, self.settings, self.save_settings)
         self.autopilot = None
         self.health_orb = Orb(trinity, self.menus, (0.85, 0.12, 0.1, 1.0))
         self.mana_orb = Orb(trinity, self.menus, (0.15, 0.35, 1.0, 1.0))
         self.spellbar = SpellBar(trinity, self.menus, world.SPELLS, world.UPGRADES, self.settings, self.save_settings)
-        self.esc_menu = Menu(trinity, self.menus, 5)
+        self.esc_menu = Menu(trinity, self.menus, 6)
         self.shrine_menu = Menu(trinity, self.menus, 2, width=420)
         self.upgrade_screen = UpgradeScreen(trinity, self.menus, world.UPGRADES)
         for menu in (self.esc_menu, self.shrine_menu, self.upgrade_screen):
@@ -450,8 +467,9 @@ class ArpgViewer(TrinityViewer):
         job.name = "carbon_crawler"
         self.main_job = job
         self.popup_step, self.menu_step = trinity.TriStepRenderScene(), trinity.TriStepRenderScene()
+        self.map_step = trinity.TriStepRenderScene()
         for step in [self.depth_step] + self.scene_steps(hud=False) + [trinity.TriStepPopDepthStencil(),
-                                                                       self.popup_step,
+                                                                       self.popup_step, self.map_step,
                                                                        trinity.TriStepRenderScene(self.hud.scene),
                                                                        self.menu_step]:
             job.steps.append(step)
@@ -475,6 +493,7 @@ class ArpgViewer(TrinityViewer):
         alpha = self.sim.alpha
         if any(TEST_FRAMES.values()) or os.environ.get("ARPG_TEST_OPEN"):
             self._test_cast(alpha)
+        self.follow_session()
         self.mesh_timer.begin()
         if PROFILE is not None:
             PROFILE.enable()
@@ -498,7 +517,8 @@ class ArpgViewer(TrinityViewer):
         self.audio.set_track(self.music_track())
         self.banner.update(dt, width, height)
         if self.automap is None:
-            self.automap = Automap(trinity, self.popups, self.stage.gen_dir)
+            self.automap = Automap(trinity, self.popups, tv.make_effect)
+            self.map_step.scene = self.automap.scene
         if self.stage.level is world.LEVEL and self.automap.level is not world.LEVEL:
             self.automap.set_level(world.LEVEL, self.cam.yaw)
         game = self.sim.state.get("game") or {}
@@ -517,6 +537,7 @@ class ArpgViewer(TrinityViewer):
         left, top, _ = self.spellbar.layout(width, height)
         self.levelup_button.update(me.get("picks", 0), self.stage.clock, left, top)
         self.update_menus(width, height)
+        self.front.draw(self.sim, width, height, self.stage.clock)
         self.update_pointer(dt, width, height)
         boss = next((e for k, e in self.sim.state.entities.items() if isinstance(e, dict) and e.get("kind") == "warlord"),
                     None)
@@ -679,6 +700,10 @@ class ArpgViewer(TrinityViewer):
         if AUTOPLAY:
             return
         self.mouse = (x, y)
+        if self.front.mode != "playing":
+            if self.front.mode == "menu" and button == tv.MOUSE_LEFT:
+                self.front.click(x, y)
+            return
         if self.menu_open:
             menu = {"esc": self.esc_menu, "shrine": self.shrine_menu, "upgrades": self.upgrade_screen}[self.menu_open]
             if not menu.click(x, y):
@@ -744,6 +769,32 @@ class ArpgViewer(TrinityViewer):
         self.upgrade_screen.hide()
         self.backdrop.hide()
 
+    def leave_game(self):
+        self.close_menu()
+        self.sim.leave()
+        self.front.to_menu()
+
+    def follow_session(self):
+        """Moves between menu, loading and play as the connection and the level come and go."""
+        sim, front = self.sim, self.front
+        client = sim.client
+        if front.mode == "loading":
+            own = self.actors.get(client.own_ball)
+            game = sim.state.get("game") or {}
+            steps = ((client.connected, "connecting"), (client.synced, "joining"),
+                     (game.get("phase") != "loading", "the next act"),
+                     ("level" in client.world, "receiving the world"),
+                     (self.stage.level is world.LEVEL, "building the level"),
+                     (own is not None and own.placeable.placeableRes is not None, "placing you"))
+            waiting = next((why for done, why in steps if not done), "loading models and textures")
+            front.check_loading(sim, all(done for done, _ in steps), waiting)
+        elif front.mode == "playing":
+            game = sim.state.get("game") or {}
+            if client.lost:
+                front.to_menu("the connection to %s closed" % front.target)
+            elif self.stage.level is not world.LEVEL or game.get("phase") == "loading":
+                front.begin_loading("the next act")
+
     def set_volume(self, key, value):
         self.settings[key] = value
         self.audio.set_volumes(self.settings["music_volume"], self.settings["sound_volume"])
@@ -770,6 +821,7 @@ class ArpgViewer(TrinityViewer):
                 ("Sounds", "%d%%" % round(100 * self.settings["sound_volume"]), None, True, "sounds",
                  self.settings["sound_volume"] == 0, self.settings["sound_volume"],
                  lambda v: self.set_volume("sound_volume", v)),
+                ("Leave game", "back to the server list", self.leave_game, True, "resume"),
                 ("Quit", "", carbonapp.quit, True, "quit"),
             ], width, height)
             return
@@ -925,6 +977,9 @@ class ArpgViewer(TrinityViewer):
         if AUTOPLAY:
             return
         self.mouse = (x, y)
+        if self.front.mode != "playing":
+            self.front.hover(x, y)
+            return
         self.spellbar.hover(x, y)
         self.esc_menu.hover(x, y)
         self.shrine_menu.hover(x, y)
@@ -933,6 +988,10 @@ class ArpgViewer(TrinityViewer):
 
     def on_key_down(self, key, flags):
         if AUTOPLAY:
+            return
+        if self.front.mode != "playing":
+            if self.front.mode == "menu":
+                self.front.key(key)
             return
         if key == VK_ESCAPE:
             if self.menu_open or self.spellbar.open_slot:
@@ -1094,7 +1153,17 @@ def add_box(solids, lo, hi, color):
 def main():
     host = os.environ.get("NET_HOST", "127.0.0.1")
     port = int(os.environ.get("NET_PORT", "47400"))
-    ArpgViewer(ArpgSim(host, port)).start()
+    viewer = ArpgViewer(ArpgSim(host, port, autoconnect=False))
+    carbonapp.at_exit(viewer.front.stop_server)
+    # ARPG_JOIN=host:port goes straight into that game (tests, the act editor's Play); otherwise the menu, with any
+    # NET_HOST/NET_PORT server at the top of its list.
+    if os.environ.get("ARPG_TEST_HOST") == "1":
+        viewer.front.host(viewer.sim)
+    elif os.environ.get("ARPG_JOIN"):
+        viewer.front.connect(viewer.sim, os.environ["ARPG_JOIN"], attempts=None)
+    elif os.environ.get("NET_HOST") or os.environ.get("NET_PORT"):
+        viewer.front.offer("%s:%d" % (host, port))
+    viewer.start()
 
 
 if __name__ == "__main__":

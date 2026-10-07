@@ -98,7 +98,7 @@ class ArpgServer:
         self.waves = Waves(self, int(os.environ.get("ARPG_FIRST_WAVE", "1")), WAVE_BASE, WAVE_STEP, INTERMISSION_S,
                            crawl=MODE == "crawl")
         self.act = Act(self, ACT_TEMPLATE, ACT_SEED) if MODE == "act" else None
-        self.peers = {}
+        self.peers, self.addresses = {}, {}
         self.client_ids = itertools.count(1)
         self.respawns = []
         self.kills = {}
@@ -113,7 +113,11 @@ class ArpgServer:
         world.add_room(self.park, add_ball)
 
     def broadcast(self, message):
-        for peer in list(self.peers.values()):
+        # Only to players: a connection that hasn't joined is a server list asking for info.
+        joined = self.sync.players.ball_for_client
+        for client_id, peer in list(self.peers.items()):
+            if client_id not in joined:
+                continue
             peer.send(message)
 
     def _send(self, client_ids, message):
@@ -145,11 +149,25 @@ class ArpgServer:
         return ENEMY_MIX[-1][0]
 
     def on_connect(self, sock, address):
+        """A connection only becomes a player once it sends "join"; before that it may only ask for "info"."""
         client_id = next(self.client_ids)
-        ball_id = world.PLAYER_BASE + client_id
         peer = netproto.Peer(sock, lambda p, msg: self.on_message(client_id, msg),
                              lambda p: self.on_disconnect(client_id))
         self.peers[client_id] = peer
+        self.addresses[client_id] = address
+
+    def info(self):
+        """What the client's server list shows."""
+        game = self.state.get("game") or {}
+        return {"mode": MODE, "act": world.LEVEL.name, "players": len(self.player_balls()), "phase": game.get("phase"),
+                "seed": world.LEVEL.features.get("seed")}
+
+    def join(self, client_id):
+        peer = self.peers.get(client_id)
+        if peer is None or client_id in self.sync.players.ball_for_client:
+            return
+        ball_id = world.PLAYER_BASE + client_id
+        address = self.addresses.pop(client_id, ("?", 0))
         area = spatial.entry_area(self)
         x, z = spatial.free_spot(self, area, min_gap=2.0) or ((area[0] + area[2]) / 2, (area[1] + area[3]) / 2)
         add_ball(self.park, ball_id, x=x, z=z, radius=world.PLAYER_RADIUS, max_velocity=world.PLAYER_SPEED,
@@ -167,6 +185,7 @@ class ArpgServer:
 
     def on_disconnect(self, client_id):
         self.peers.pop(client_id, None)
+        self.addresses.pop(client_id, None)
         ball_id = self.sync.players.ball_for_client.get(client_id)
         self.sync.leave(client_id)
         self.kills.pop(client_id, None)
@@ -184,6 +203,13 @@ class ArpgServer:
         if kind == "ping":
             if peer:
                 peer.send(("pong",) + message[1:])
+            return
+        if kind == "info":
+            if peer:
+                peer.send(("info", self.info()))
+            return
+        if kind == "join":
+            self.join(client_id)
             return
         ball_id = self.sync.players.ball_for_client.get(client_id)
         if ball_id is None or ball_id not in self.park.balls:

@@ -28,8 +28,10 @@ def load_settings():
     def volume(key, old):
         value = data.get(key, 1.0 if data.get(old, True) else 0.0)
         return max(0.0, min(1.0, float(value))) if isinstance(value, (int, float)) else 1.0
+    servers = [s for s in data.get("servers", []) if isinstance(s, str)] or ["127.0.0.1:47400"]
     return {"bindings": dict(DEFAULT_BINDINGS), "scheme": data.get("scheme", "wasd"),
-            "music_volume": volume("music_volume", "music"), "sound_volume": volume("sound_volume", "sounds")}
+            "music_volume": volume("music_volume", "music"), "sound_volume": volume("sound_volume", "sounds"),
+            "servers": servers}
 
 
 def save_settings(settings):

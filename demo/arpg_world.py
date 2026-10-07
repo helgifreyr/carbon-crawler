@@ -209,9 +209,15 @@ def apply_settings():
     destiny.settings.Apply(config)
 
 
-def add_box(ball, box):
+def add_box(ball, box, origin=(0.0, 0.0)):
+    """A collision box on a ball; its corners are given in the world, the box is stored relative to origin."""
     x0, z0, x1, z1 = box
-    ball.AddMiniBox(x0, WALL_BASE_Y, z0, x1 - x0, 0.0, 0.0, 0.0, WALL_H, 0.0, 0.0, 0.0, z1 - z0)
+    ball.AddMiniBox(x0 - origin[0], WALL_BASE_Y, z0 - origin[1], x1 - x0, 0.0, 0.0, 0.0, WALL_H, 0.0, 0.0, 0.0, z1 - z0)
+
+
+def gate_centre(gate_id):
+    x0, z0, x1, z1 = GATES[gate_id - GATE_BASE]
+    return (x0 + x1) / 2, (z0 + z1) / 2
 
 
 def add_room(park, add_ball):
@@ -226,9 +232,13 @@ def add_room(park, add_ball):
 
 
 def add_gate(park, add_ball, gate_id):
-    gate = add_ball(park, gate_id, max_velocity=0.0, radius=0.0, is_free=False, is_massive=False, is_interactive=True)
+    """A gate's ball stands at the gate itself: a static ball only collides with what comes near it, wherever its
+    boxes reach, so one at the origin with its box far away never stops anyone."""
+    cx, cz = gate_centre(gate_id)
+    gate = add_ball(park, gate_id, x=cx, z=cz, max_velocity=0.0, radius=0.0, is_free=False, is_massive=False,
+                    is_interactive=True)
     park.SetBallFree(gate_id, False)
-    add_box(gate, GATES[gate_id - GATE_BASE])
+    add_box(gate, GATES[gate_id - GATE_BASE], (cx, cz))
     return gate
 
 
@@ -250,7 +260,7 @@ def sync_gates(park, mirror=None, add_ball=None):
             continue
         shut.add(gate_id)
         if not len(ball.miniBoxes):
-            add_box(ball, GATES[gate_id - GATE_BASE])
+            add_box(ball, GATES[gate_id - GATE_BASE], gate_centre(gate_id))
     if mirror is not None:
         for gate_id in gate_ids():
             if gate_id in shut and gate_id not in mirror.balls:

@@ -8,6 +8,9 @@ from arpg_gen import interpret, karst, layout, light, template
 from arpg_map import CELL, FLOOR, CellMap, Level
 
 TORCH_SPACING_M = 9.0
+GATE_THICKNESS_M = 0.6
+# How far out from an arena's way in its gate may stand, in cells.
+CUT_SEARCH = 7
 # Floor cells per pack in ordinary regions, the most packs a region gets, and the room kept around each pack.
 CELLS_PER_PACK, MAX_PACKS, PACK_GAP_CELLS = 220, 4, 9
 PROCESSES = {"karst": karst.simulate}
@@ -75,25 +78,122 @@ def pack_kinds(depth, rng):
     return [rng.choice(pool) for _ in range(size)]
 
 
+STEPS4 = ((0, 1), (0, -1), (1, 0), (-1, 0))
+STEPS8 = STEPS4 + ((1, 1), (1, -1), (-1, 1), (-1, -1))
+
+
+def _groups(cells):
+    """cells (a set of (z, x)) split into 8-connected groups."""
+    groups, left = [], set(cells)
+    while left:
+        stack = [left.pop()]
+        group = set(stack)
+        while stack:
+            z, x = stack.pop()
+            for dz, dx in STEPS8:
+                n = (z + dz, x + dx)
+                if n in left:
+                    left.discard(n)
+                    group.add(n)
+                    stack.append(n)
+        groups.append(group)
+    return groups
+
+
 def arena(floor, owner, k, depth, rng):
-    """A sealed arena in region k: its floor cells, a gate on every floor cell just outside it, and its waves."""
-    # Only the region's largest connected stretch of floor: pockets joined to it only from outside stay outside.
+    """A sealed arena in region k: a straight gate across each way in, at its narrowest within reach, and waves.
+
+    Returns the arena spec, the gate boxes and yaws, and the arena's cells (which take in the pockets up to its gates)."""
     label = interpret.components(floor & (owner == k))
     sizes = np.bincount(label.ravel())
     sizes[0] = 0
-    inside = label == sizes.argmax()
-    gates, yaws = [], []
     nz, nx = floor.shape
-    for z, x in np.argwhere(floor & (owner != k)):
-        for dz, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-            a, b = z + dz, x + dx
-            if 0 <= a < nz and 0 <= b < nx and inside[a, b]:
-                gates.append((x * CELL, z * CELL, (x + 1) * CELL, (z + 1) * CELL))
-                # A portcullis spans the doorway: across z when the arena lies east or west of it.
-                yaws.append(0.0 if dx else math.pi / 2)
+    inside = {(int(z), int(x)) for z, x in np.argwhere(label == sizes.argmax())}
+
+    def open_(c):
+        return 0 <= c[0] < nz and 0 <= c[1] < nx and floor[c]
+
+    border = {(z + dz, x + dx) for z, x in inside for dz, dx in STEPS4
+              if open_((z + dz, x + dx)) and (z + dz, x + dx) not in inside}
+    entrances = _groups(border)
+    cuts, gates, yaws = [], [], []
+
+    def flood(blocked, stop=()):
+        """Floor reachable from the arena around blocked cells; None as soon as it touches a stop cell."""
+        seen, stack = set(inside), list(inside)
+        while stack:
+            z, x = stack.pop()
+            for dz, dx in STEPS4:
+                n = (z + dz, x + dx)
+                if n in seen or n in blocked or not open_(n):
+                    continue
+                if n in stop:
+                    return None
+                seen.add(n)
+                stack.append(n)
+        return seen
+
+    for entrance in entrances:
+        others = border - entrance
+        # Floor outward from this way in, not through the arena: the cut is looked for within CUT_SEARCH cells of it.
+        dist, frontier = {c: 0 for c in entrance}, list(entrance)
+        while frontier:
+            nxt = []
+            for z, x in frontier:
+                for dz, dx in STEPS4:
+                    n = (z + dz, x + dx)
+                    if open_(n) and n not in inside and n not in dist and n not in others:
+                        dist[n] = dist[(z, x)] + 1
+                        if dist[n] <= CUT_SEARCH:
+                            nxt.append(n)
+            frontier = nxt
+        far = {c for c, d in dist.items() if d > CUT_SEARCH}
+        if not far:
+            continue
+        candidates = []
+        for c in dist:
+            if dist[c] > CUT_SEARCH:
+                continue
+            for axis in (0, 1):
+                run, touches = [c], False
+                for sign in (-1, 1):
+                    n = c
+                    while True:
+                        n = (n[0] + sign, n[1]) if axis == 0 else (n[0], n[1] + sign)
+                        if not open_(n):
+                            break
+                        if n in inside:
+                            touches = True
+                            break
+                        run.append(n)
+                if not touches:
+                    candidates.append((len(run), dist[c], axis, frozenset(run)))
+        for length, _, axis, run in sorted(candidates, key=lambda t: t[:2]):
+            if flood(set(run) | others | {cell for cut, _ in cuts for cell in cut}, far) is not None:
+                cuts.append((run, axis))
                 break
+    blocked = {cell for cut, _ in cuts for cell in cut}
+    cells = flood(blocked)
+    half = GATE_THICKNESS_M / 2
+    for run, axis in cuts:
+        for z, x in run:
+            cx, cz = (x + 0.5) * CELL, (z + 0.5) * CELL
+            if axis == 0:
+                # A run down z: the gate spans z.
+                gates.append((cx - half, z * CELL, cx + half, (z + 1) * CELL))
+                yaws.append(0.0)
+            else:
+                gates.append((x * CELL, cz - half, (x + 1) * CELL, cz + half))
+                yaws.append(math.pi / 2)
+    # Players count as in the arena a cell clear of every gate and of the floor outside, so no gate closes on anyone.
+    deep = {c for c in cells if all((c[0] + dz, c[1] + dx) in cells or not open_((c[0] + dz, c[1] + dx))
+                                    for dz, dx in STEPS8)}
     waves = [pack_kinds(min(1.0, depth + 0.1 * w), rng) + pack_kinds(depth, rng) for w in range(3)]
-    return {"cells": [(int(x), int(z)) for z, x in np.argwhere(inside)], "waves": waves}, gates, yaws, inside
+    mask = np.zeros_like(floor)
+    for c in cells:
+        mask[c] = True
+    return ({"cells": [(x, z) for z, x in sorted(cells)], "deep": [(x, z) for z, x in sorted(deep)], "waves": waves},
+            gates, yaws, mask)
 
 
 def generate(template_name, seed, attempts=4, debug=False):

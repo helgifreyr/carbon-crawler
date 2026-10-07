@@ -1,6 +1,5 @@
 @echo off
 rem run_arpg_client [companion [N]]: "companion" also starts N (default 1) AI mages fighting alongside you.
-if "%NET_HOST%"=="" set NET_HOST=127.0.0.1
 pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_shaders.ps1" || exit /b 1
 if /i "%~1"=="companion" (
     set COMPANIONS=%~2
