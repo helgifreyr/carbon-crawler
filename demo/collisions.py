@@ -10,7 +10,7 @@ class ContactCorrections:
     Collision outcomes depend on park-local history, so clients can't be trusted to reproduce them.
     Destiny only raises DoCollision for missiles, so contacts are found here with a spatial hash."""
 
-    def __init__(self, park, actions, margin=1.0, static_boxes=(), sustained_every_ticks=1):
+    def __init__(self, park, actions, margin=1.0, static_boxes=(), sustained_every_ticks=1, static_near=None):
         self.park = park
         self.actions = actions
         self.margin = margin
@@ -20,6 +20,8 @@ class ContactCorrections:
         self._last_corrected = {}
         # Axis-aligned footprints (x0, z0, x1, z1) of static geometry; contact with them is corrected too.
         self.static_boxes = list(static_boxes)
+        # Or static_near(x, z, reach): the boxes that may lie within reach of (x, z), for geometry that changes or is large.
+        self.static_near = static_near or (lambda x, z, reach: self.static_boxes)
         self.watched = set()
         self.contacts = 0
         self.corrections = 0
@@ -48,7 +50,7 @@ class ContactCorrections:
             if not is_free:
                 continue
             limit = reach + self.margin
-            for x0, z0, x1, z1 in self.static_boxes:
+            for x0, z0, x1, z1 in self.static_near(x, z, limit):
                 dx = max(x0 - x, 0.0, x - x1)
                 dz = max(z0 - z, 0.0, z - z1)
                 if dx * dx + dz * dz < limit * limit:
@@ -59,8 +61,7 @@ class ContactCorrections:
     def find_contacts(self):
         rows = self._snapshot()
         touching = set()
-        if self.static_boxes:
-            self._static_contacts(rows, touching)
+        self._static_contacts(rows, touching)
         if len(rows) < 2:
             return touching
         cell = 2.0 * max(r[4] for r in rows) + self.margin

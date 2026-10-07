@@ -1,8 +1,12 @@
 import os
 
-from arpg_layout import SHRINE, SHRINE_RANGE, BOXES, PLAYER_RADIUS, ENEMY_RADIUS, PROJECTILE_RADIUS, ROOM_D, ROOM_W, WALL_BASE_Y, WALL_H, WALL_T
+from arpg_layout import (BOUNDS, BOXES, ENEMY_RADIUS, GATES, PLAYER_RADIUS, PROJECTILE_RADIUS, ROOMS, SHRINE, SHRINE_RANGE,
+                         WALL_BASE_Y, WALL_H, WALL_T, room_at)
 
 ROOM = 1
+# Each gate is a ball of its own holding one collision box. Moving a ball leaves its boxes where they were, so a gate
+# opens by removing its ball and shuts by adding it again.
+GATE_BASE = 2
 PLAYER_BASE, ENEMY_BASE, PROJECTILE_BASE, SPIT_BASE = 1000, 100000, 1000000, 2000000
 
 DESTINY_SETTINGS = {"useIterativeCollision": True}
@@ -157,7 +161,8 @@ PROJECTILE_AGILITY = 0.01 * FRICTION_OVER_MASS
 
 
 def world_description():
-    return {"destiny_settings": DESTINY_SETTINGS, "static_ball": ROOM, "boxes": BOXES, "wall_height": WALL_H}
+    return {"destiny_settings": DESTINY_SETTINGS, "static_ball": ROOM, "boxes": BOXES, "wall_height": WALL_H,
+            "gates": {GATE_BASE + i: box for i, box in enumerate(GATES)}}
 
 
 def apply_settings():
@@ -168,16 +173,87 @@ def apply_settings():
     destiny.settings.Apply(config)
 
 
+def add_box(ball, box):
+    x0, z0, x1, z1 = box
+    ball.AddMiniBox(x0, WALL_BASE_Y, z0, x1 - x0, 0.0, 0.0, 0.0, WALL_H, 0.0, 0.0, 0.0, z1 - z0)
+
+
 def add_room(park, add_ball):
+    """The static walls, and one ball per gate, all shut."""
     room = add_ball(park, ROOM, max_velocity=0.0, radius=0.0, is_free=False, is_massive=False, is_interactive=True)
     park.SetBallFree(ROOM, False)
-    for x0, z0, x1, z1 in BOXES:
-        room.AddMiniBox(x0, WALL_BASE_Y, z0, x1 - x0, 0.0, 0.0, 0.0, WALL_H, 0.0, 0.0, 0.0, z1 - z0)
+    for box in BOXES:
+        add_box(room, box)
+    for gate_id in gate_ids():
+        add_gate(park, add_ball, gate_id)
     return room
 
 
+def add_gate(park, add_ball, gate_id):
+    gate = add_ball(park, gate_id, max_velocity=0.0, radius=0.0, is_free=False, is_massive=False, is_interactive=True)
+    park.SetBallFree(gate_id, False)
+    add_box(gate, GATES[gate_id - GATE_BASE])
+    return gate
+
+
+def gate_ids():
+    return range(GATE_BASE, GATE_BASE + len(GATES))
+
+
+# Which gates are shut, for the box tests below; each process updates it from its own park with sync_gates.
+shut_gates = set(gate_ids())
+
+
+def sync_gates(park, mirror=None, add_ball=None):
+    """Reads which gates a park has into shut_gates, giving a replicated gate ball back its box (replication carries
+    no boxes). With mirror, a second park gets the same gates. True if any gate changed."""
+    shut = set()
+    for gate_id in gate_ids():
+        ball = park.balls.get(gate_id)
+        if ball is None:
+            continue
+        shut.add(gate_id)
+        if not len(ball.miniBoxes):
+            add_box(ball, GATES[gate_id - GATE_BASE])
+    if mirror is not None:
+        for gate_id in gate_ids():
+            if gate_id in shut and gate_id not in mirror.balls:
+                add_gate(mirror, add_ball, gate_id)
+            elif gate_id not in shut and gate_id in mirror.balls:
+                mirror.RemoveBall(gate_id)
+    if shut == shut_gates:
+        return False
+    shut_gates.clear()
+    shut_gates.update(shut)
+    return True
+
+
+def room_rect(index):
+    return ROOMS[index]["rect"]
+
+
+# Static boxes bucketed into INDEX_CELL squares, so a point test only looks at the boxes near it.
+INDEX_CELL = 4.0
+_index = {}
+for _box in BOXES:
+    for _i in range(int((_box[0] - 1.0) // INDEX_CELL), int((_box[2] + 1.0) // INDEX_CELL) + 1):
+        for _j in range(int((_box[1] - 1.0) // INDEX_CELL), int((_box[3] + 1.0) // INDEX_CELL) + 1):
+            _index.setdefault((_i, _j), []).append(_box)
+
+
+def boxes_near(x, z, pad=0.0):
+    """Static boxes and shut gates that may lie within pad (up to 1 m) of (x, z)."""
+    found = _index.get((int(x // INDEX_CELL), int(z // INDEX_CELL)), ())
+    if pad > 1.0:
+        found = {b for i in range(int((x - pad) // INDEX_CELL), int((x + pad) // INDEX_CELL) + 1)
+                 for j in range(int((z - pad) // INDEX_CELL), int((z + pad) // INDEX_CELL) + 1) for b in _index.get((i, j), ())}
+    if shut_gates:
+        found = list(found) + [GATES[g - GATE_BASE] for g in shut_gates]
+    return found
+
+
 def inside_box(x, z, pad=0.0):
-    return any(x0 - pad <= x <= x1 + pad and z0 - pad <= z <= z1 + pad for x0, z0, x1, z1 in BOXES)
+    return any(x0 - pad <= x <= x1 + pad and z0 - pad <= z <= z1 + pad for x0, z0, x1, z1 in boxes_near(x, z, pad))
 
 
 def blink_target(x, z, tx, tz, radius=PLAYER_RADIUS):

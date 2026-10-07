@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Headless waves-mode smoke test: server + N AI companions fight through waves; prints the server's wave reports.
+# Headless smoke test: server + N AI companions fight through the crawl (or ARPG_MODE=waves); prints the server's wave reports.
 # usage: tools/arpg_waves_test.sh [companions] [seconds]   (ARPG_FIRST_WAVE, INTERMISSION_S, ... pass through)
 cd "$(dirname "$0")/.."
 # Tests and captures run muted; set ARPG_AUDIO=1 to hear them.
 export ARPG_AUDIO=${ARPG_AUDIO:-0}
 export NET_PORT=${NET_PORT:-47410}
-export ARPG_MODE=waves
+export ARPG_MODE=${ARPG_MODE:-crawl}
 export INTERMISSION_S=${INTERMISSION_S:-6}
 export NET_HOST=127.0.0.1
 ROOT="$(cygpath -w "$PWD")"

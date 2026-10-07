@@ -1,7 +1,7 @@
 """A computer-controlled mage that joins the game as an ordinary client and fights alongside the players.
 
-It follows the nearest human, keeps clear of melee, casts whatever suits the moment and, between waves, walks
-to the shrine to ready up; it spends its upgrades as soon as it has them. It is a plain network client: the server can't tell it apart."""
+It follows the nearest human, keeps clear of melee, casts whatever suits the moment and, between fights, readies
+up at the shrine or walks on through the open gate; it spends its upgrades as soon as it has them. It is a plain network client: the server can't tell it apart."""
 import os
 import random
 import sys
@@ -11,6 +11,7 @@ sys.path.insert(0, HERE)
 
 import blue
 
+import arpg_world as world
 import carbonapp
 from arpg_brain import Brain, NetActs
 from arpg_state import ClientState
@@ -30,6 +31,7 @@ class Companion:
 
     def on_tick(self):
         self.state.apply_until(self.client.park.currentTime)
+        world.sync_gates(self.client.park)
         for _, key, name, data in self.state.take_events():
             self.brain.warn(key, name, data)
 

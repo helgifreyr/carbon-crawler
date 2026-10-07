@@ -24,8 +24,8 @@ from arpg_world import KINDS, SPELLS
 
 FROST_RANGE, METEOR_RADIUS = SPELLS["frost"]["range"], SPELLS["meteor"]["radius"]
 NOVA_RADIUS, SLAM_RADIUS = SPELLS["nova"]["radius"], KINDS["brute"]["slam"]["radius"]
-from arpg_layout import (FLOOR_Y, LIGHTMAP_PX_PER_M, LIGHTMAP_RECT, PROPS, ROOM_D, ROOM_W, TORCHES, WALL_BASE_Y,
-                         WALL_BOXES, WALL_H)
+from arpg_layout import (BOUNDS, CORRIDORS, DOOR_HALF, FLOOR_Y, LIGHTMAP_PX_PER_M, LIGHTMAP_RECT, PROPS, ROOMS, TORCHES,
+                         WALL_BASE_Y, WALL_BOXES, WALL_H, WALL_OUTSIDE, WALL_T)
 
 OUT = os.path.join(ROOT, "res", "arpg")
 PREVIEW = os.path.join(ROOT, "demo", "out", "arpg_assets_preview.png")
@@ -815,20 +815,25 @@ def torch_lightmap():
     w, h = int((x1 - x0) * LIGHTMAP_PX_PER_M), int((z1 - z0) * LIGHTMAP_PX_PER_M)
     xs = x0 + (np.arange(w) + 0.5) / LIGHTMAP_PX_PER_M
     zs = z0 + (np.arange(h) + 0.5) / LIGHTMAP_PX_PER_M
-    gx, gz = np.meshgrid(xs, zs)
     light = np.zeros((h, w))
     with np.errstate(divide="ignore", invalid="ignore"):
         for tx, tz, _ in TORCHES:
+            # Only the pixels and walls within the torch's reach matter.
+            i0, i1 = np.searchsorted(xs, tx - TORCH_REACH_M), np.searchsorted(xs, tx + TORCH_REACH_M)
+            j0, j1 = np.searchsorted(zs, tz - TORCH_REACH_M), np.searchsorted(zs, tz + TORCH_REACH_M)
+            gx, gz = np.meshgrid(xs[i0:i1], zs[j0:j1])
             dx, dz = tx - gx, tz - gz
             falloff = np.clip(1.0 - np.hypot(dx, dz) / TORCH_REACH_M, 0.0, 1.0) ** 1.8
             lit = np.ones_like(falloff, dtype=bool)
             for bx0, bz0, bx1, bz1 in WALL_BOXES:
+                if bx1 < tx - TORCH_REACH_M or bx0 > tx + TORCH_REACH_M or bz1 < tz - TORCH_REACH_M or bz0 > tz + TORCH_REACH_M:
+                    continue
                 ax, bx = (bx0 - gx) / dx, (bx1 - gx) / dx
                 az, bz = (bz0 - gz) / dz, (bz1 - gz) / dz
                 tmin = np.maximum(np.minimum(ax, bx), np.minimum(az, bz))
                 tmax = np.minimum(np.maximum(ax, bx), np.maximum(az, bz))
                 lit &= ~((tmax >= tmin) & (tmax > 0.0) & (tmin < 1.0))
-            light += falloff * lit
+            light[j0:j1, i0:i1] += falloff * lit
     for _ in range(3):
         padded = np.pad(light, 1, mode="edge")
         light = sum(padded[1 + a:h + 1 + a, 1 + b:w + 1 + b] for a in (-1, 0, 1) for b in (-1, 0, 1)) / 9.0
@@ -845,12 +850,14 @@ def build_projectile():
 
 
 def build_floor():
+    """Every room's and corridor's floor, running under the walls around it."""
     m = Model()
-    m.add(box(ROOM_W + 2, ROOM_D + 2, 0.1), 0, at(0, 0, FLOOR_Y - 0.05), smooth=False)
+    # Room floors reach under their walls; corridor floors fill the gap between, without overlapping them.
+    rects = [(x0 - WALL_T, z0 - WALL_T, x1 + WALL_T, z1 + WALL_T) for x0, z0, x1, z1 in (r["rect"] for r in ROOMS)]
+    rects += [(x0 + WALL_T, z0 - WALL_T, x1 - WALL_T, z1 + WALL_T) for x0, z0, x1, z1 in CORRIDORS]
+    for x0, z0, x1, z1 in rects:
+        m.add(box(x1 - x0, z1 - z0, 0.1), 0, at((x0 + x1) / 2, -(z0 + z1) / 2, FLOOR_Y - 0.05), smooth=False)
     return m
-
-
-OUTSIDE = [(0.0, 1.0), (0.0, -1.0), (-1.0, 0.0), (1.0, 0.0)]
 
 
 def build_walls():
@@ -862,10 +869,10 @@ def build_walls():
         m.add(box(w, d, WALL_H, 0.05), 0, at(cx, cy, WALL_BASE_Y + WALL_H / 2), smooth=False)
         m.add(box(w + 0.16, d + 0.16, 0.16, 0.04), 0, at(cx, cy, top + 0.06), smooth=False)
         m.add(box(w + 0.18, d + 0.18, 0.24, 0.04), 0, at(cx, cy, FLOOR_Y + 0.1), smooth=False)
-        if index >= len(OUTSIDE):
+        if WALL_OUTSIDE[index] is None:
             continue
-        # Outer walls: battlements along the top, buttresses on the outside face.
-        ox, oy = OUTSIDE[index]
+        # Outer walls: battlements along the top, buttresses on the outside face (layout z is Blender -Y).
+        ox, oy = WALL_OUTSIDE[index][0], -WALL_OUTSIDE[index][1]
         along_x = w > d
         length = w if along_x else d
         for k in range(int(length / 1.4)):
@@ -899,11 +906,13 @@ def build_props():
             for h, r in ((0.16, 0.345), (0.84, 0.345)):
                 m.add(lathe([(0.0, h - 0.035), (r, h - 0.035), (r, h + 0.035), (0.0, h + 0.035)], 20), IRON, place)
     rng = np.random.default_rng(11)
-    for sx in (-1, 1):
-        for sz in (-1, 1):
+    for room in ROOMS:
+        x0, z0, x1, z1 = room["rect"]
+        cx, cz, hx, hz = (x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (z1 - z0) / 2
+        for sx, sz in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
             for _ in range(7):
-                rx = sx * (ROOM_W / 2 - rng.uniform(1.6, 3.2))
-                rz = sz * (ROOM_D / 2 - rng.uniform(0.3, 2.2))
+                rx = cx + sx * (hx - rng.uniform(1.6, 3.2))
+                rz = cz + sz * (hz - rng.uniform(0.3, 2.2))
                 size = rng.uniform(0.06, 0.16)
                 m.add(ico(size, 1), STONE, at(rx, -rz, f + size * 0.4, 1.0, rng.uniform(0.7, 1.3), 0.6,
                                             rz=rng.uniform(0, 3)), smooth=False)
@@ -911,8 +920,24 @@ def build_props():
 
 
 def build_ground():
+    x0, z0, x1, z1 = BOUNDS
     m = Model()
-    m.add(box(ROOM_W + 160, ROOM_D + 140, 0.1), 0, at(0, 0, FLOOR_Y - 0.07), smooth=False)
+    m.add(box(x1 - x0 + 160, z1 - z0 + 140, 0.1), 0, at((x0 + x1) / 2, -(z0 + z1) / 2, FLOOR_Y - 0.07), smooth=False)
+    return m
+
+
+def build_gate():
+    """A portcullis filling a doorway: the origin is the doorway's centre on the floor, its bars run along engine Z."""
+    m = Model()
+    f, top, half = FLOOR_Y, FLOOR_Y + WALL_H + 0.1, DOOR_HALF
+    bars = 11
+    for k in range(bars):
+        y = -half + 0.12 + k * (2 * half - 0.24) / (bars - 1)
+        m.add(tube([(0, y, f - 0.12), (0, y, (f + top) / 2), (0, y, top)], [0.045, 0.045, 0.045], 8), IRON)
+        m.add(lathe([(0.0, f - 0.3), (0.05, f - 0.12), (0.0, f - 0.12)], 8), IRON, at(0, y, 0))
+    for z in (f + 0.35, f + 1.4, f + 2.45):
+        m.add(box(0.07, 2 * half, 0.1, 0.01), IRON, at(0, 0, z), smooth=False)
+    m.add(box(0.12, 2 * half + 0.1, 0.16, 0.02), IRON, at(0, 0, top), smooth=False)
     return m
 
 
@@ -1269,6 +1294,7 @@ def main():
     counts["floor"] = build_floor().export(os.path.join(meshes, "floor.cmf"), "floor", world_uv(4.0))
     counts["walls"] = build_walls().export(os.path.join(meshes, "walls.cmf"), "walls", world_uv(1.5))
     counts["props"] = build_props().export(os.path.join(meshes, "props.cmf"), "props")
+    counts["gate"] = build_gate().export(os.path.join(meshes, "gate.cmf"), "gate")
     build_ground().export(os.path.join(meshes, "ground.cmf"), "ground", world_uv(6.0))
 
     for variant in PALETTES:
@@ -1331,6 +1357,7 @@ def main():
     write_red("floor", {"mesh": "floor", "texture": "floor", "textures": {"NormalMap": "res:/arpg/textures/floor_n.png"},
                         "params": {"Surface": (1.0, 0.55, 18.0, 0.0)}})
     write_red("props", {"mesh": "props", "texture": "palette_enemy", "params": {"Occlusion": (0.35, -0.5, 1.0, 0)}})
+    write_red("gate", {"mesh": "gate", "texture": "palette_enemy"})
     write_red("ground", {"mesh": "ground", "texture": "ground", "textures": {"NormalMap": "res:/arpg/textures/ground_n.png"},
                          "params": {"Surface": (1.0, 0.3, 14.0, 0.0)}})
     write_red("walls", {"mesh": "walls", "texture": "wall", "effect": WALL_EFFECT,

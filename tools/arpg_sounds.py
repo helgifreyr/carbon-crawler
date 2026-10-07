@@ -121,6 +121,17 @@ def clang(rng, p):
     return room(mix(*partials, tick), 0.15)
 
 
+def gate(rng, p):
+    # A portcullis moving: chain links rattling over a grinding rumble, ending on a heavy clunk.
+    d = 1.8
+    chain = bandpass(crackle(d, rng, 60, 0.9), 3200, 1.5) * env(d, 0.05, 1.2, 0.4, 1.0) * 1.6
+    grind = lowpass(white(d, rng), 420) * env(d, 0.2, 1.1, 0.4, 1.0) * 0.9
+    rumble = osc("saw", vibrato(np.full(int(d * 48000), 48 * p), 7, 0.08)) * env(d, 0.2, 1.1, 0.4, 1.0) * 0.25
+    clunk = osc("sine", sweep(d, 95 * p, 40 * p)) * env(d, 0.002, 0.0, 0.3, 2.0, punch=1.5)
+    clunk = np.concatenate([np.zeros(int(1.35 * 48000)), clunk[:int(0.45 * 48000)]])
+    return room(lowpass(drive(mix(chain, grind, rumble, clunk), 1.6), 5000), 0.25)
+
+
 def snarl(rng, p):
     # A hound winding up to charge: a rising, rasping growl.
     d = 0.75
@@ -222,7 +233,7 @@ def roar(rng, p):
 RECIPES = {
     "cast": bolt, "impact": impact, "nova": nova, "blink": blink, "chain": chain, "meteor_fall": meteor_fall,
     "meteor": meteor, "frost": frost, "spit": spit, "swipe": swipe, "roll": roll, "jump": jump, "mend": mend, "snarl": snarl, "fuse": fuse, "splat": splat,
-    "clang": clang, "slam": slam, "death": death, "hurt": hurt,
+    "clang": clang, "gate": gate, "slam": slam, "death": death, "hurt": hurt,
     "pickup_health": pickup_health, "pickup_mana": pickup_mana, "levelup": levelup, "wave_start": wave_start,
     "wave_clear": wave_clear, "defeat": defeat, "roar": roar,
 }

@@ -38,13 +38,30 @@ class EnemyGrid:
         return best
 
 
-def free_spot(g, x_range, min_player_distance=0.0, min_gap=1.5, attempts=300):
-    """A random floor point in x_range clear of walls, other massive balls and (optionally) players, or None."""
+def room_area(g, inset=2.0):
+    """The current room's floor, inset from its walls, as (x0, z0, x1, z1)."""
+    x0, z0, x1, z1 = world.room_rect(g.room)
+    return x0 + inset, z0 + inset, x1 - inset, z1 - inset
+
+
+def entry_area(g):
+    """The strip just inside the current room's west wall, where players arrive."""
+    x0, z0, _, z1 = world.room_rect(g.room)
+    return x0 + 2.0, max(z0 + 2.0, -6.0), x0 + 8.0, min(z1 - 2.0, 6.0)
+
+
+def clamp_to_room(g, x, z, inset=1.0):
+    x0, z0, x1, z1 = room_area(g, inset)
+    return max(x0, min(x1, x)), max(z0, min(z1, z))
+
+
+def free_spot(g, area, min_player_distance=0.0, min_gap=1.5, attempts=300):
+    """A random floor point in area (x0, z0, x1, z1) clear of walls, other massive balls and (optionally) players."""
     balls = g.park.balls
     players = g.player_balls()
     for _ in range(attempts):
-        x = g.rng.uniform(*x_range)
-        z = g.rng.uniform(-world.ROOM_D / 2 + 1.5, world.ROOM_D / 2 - 1.5)
+        x = g.rng.uniform(area[0], area[2])
+        z = g.rng.uniform(area[1], area[3])
         if world.inside_box(x, z, pad=1.0):
             continue
         if any((b.x - x) ** 2 + (b.z - z) ** 2 < min_gap ** 2 for b in balls.values() if b.isMassive):

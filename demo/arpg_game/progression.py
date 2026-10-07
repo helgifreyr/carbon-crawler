@@ -1,4 +1,5 @@
 import arpg_world as world
+from arpg_game import spatial
 from arpg_game.components import Player
 
 
@@ -61,11 +62,16 @@ def award_xp(g, ball_id, amount):
     apply_stats(g, ball_id, heal=True)
 
 
-def respawn_player(g, ball_id, reset=False):
-    player = g.ents.get(ball_id, Player)
-    x, z = player.spawn if player else (-25.0, 0.0)
+def place_player(g, ball_id):
+    """Moves a player to a free spot where players arrive in the current room."""
+    area = spatial.entry_area(g)
+    x, z = spatial.free_spot(g, area, min_gap=1.0) or ((area[0] + area[2]) / 2, (area[1] + area[3]) / 2)
     g.sync.actions.set_ball_position(ball_id, x, 0.0, z)
     g.sync.actions.set_ball_velocity(ball_id, 0.0, 0.0, 0.0)
+
+
+def respawn_player(g, ball_id, reset=False):
+    place_player(g, ball_id)
     entity = g.state.get(ball_id) or {}
     if reset:
         g.state.set(ball_id, **fresh_player_state(g))

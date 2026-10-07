@@ -15,7 +15,7 @@ _ids = itertools.count(world.ENEMY_BASE)
 def spawn(g, kind):
     """Adds an enemy ball of this kind, with one component per behaviour its KINDS entry lists."""
     spec = world.KINDS[kind]
-    spot = spatial.free_spot(g, (-world.ROOM_W / 2 + 2, world.ROOM_W / 2 - 2), min_player_distance=12.0,
+    spot = spatial.free_spot(g, spatial.room_area(g), min_player_distance=12.0,
                              min_gap=1.5 + spec["radius"])
     if spot is None:
         return None
@@ -254,8 +254,7 @@ def _rain(g, eid, e, rain, players):
         for k in range(rain.per_player):
             spread = 0.0 if k == 0 else 3.5
             a = g.rng.uniform(0, 2 * math.pi)
-            x = max(-world.ROOM_W / 2 + 1, min(world.ROOM_W / 2 - 1, pl.x + spread * math.sin(a)))
-            z = max(-world.ROOM_D / 2 + 1, min(world.ROOM_D / 2 - 1, pl.z + spread * math.cos(a)))
+            x, z = spatial.clamp_to_room(g, pl.x + spread * math.sin(a), pl.z + spread * math.cos(a))
             points.append((round(x, 2), round(z, 2)))
             spells.strike_later(g, impact, x, z, rain.radius, rain.damage, None, "players")
     g.state.event(eid, "rain", points=points)
@@ -280,7 +279,7 @@ def steer(g, aggro):
         elif d < aggro:
             g.sync.actions.follow_ball(eid, target.id, world.PLAYER_RADIUS + e.radius + 0.2)
         elif e.mode != destiny.DSTBALL_GOTO and g.rng.random() < 0.1:
-            spot = spatial.free_spot(g, (-world.ROOM_W / 2 + 2, world.ROOM_W / 2 - 2), min_gap=0.0)
+            spot = spatial.free_spot(g, spatial.room_area(g), min_gap=0.0)
             if spot:
                 g.sync.actions.go_to_point(eid, spot[0], 0.0, spot[1])
 
@@ -288,8 +287,7 @@ def steer(g, aggro):
 def _keep_range(g, eid, e, keep, target, d, tick):
     if d < keep.near:
         ax, az = (e.x - target.x) / d, (e.z - target.z) / d
-        x = max(-world.ROOM_W / 2 + 1.5, min(world.ROOM_W / 2 - 1.5, e.x + ax * 4.0))
-        z = max(-world.ROOM_D / 2 + 1.5, min(world.ROOM_D / 2 - 1.5, e.z + az * 4.0))
+        x, z = spatial.clamp_to_room(g, e.x + ax * 4.0, e.z + az * 4.0, 1.5)
         g.sync.actions.go_to_point(eid, x, 0.0, z)
     elif d > keep.far:
         g.sync.actions.follow_ball(eid, target.id, keep.far - 1.5)

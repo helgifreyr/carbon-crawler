@@ -168,7 +168,16 @@ class Brain:
         if self.dodge(own):
             return
         game = self.state.get("game") or {}
-        if game.get("phase", "fight") != "fight":
+        phase = game.get("phase", "fight")
+        if phase == "advance":
+            # Through the open gate and well into the next room, where the next fight starts.
+            x0, _, x1, _ = world.room_rect(game.get("room", 0) + 1)
+            self.travel(own, x0 + min(6.0, (x1 - x0) / 3), self.rng.uniform(-1.0, 1.0) if self.goal is None else self.goal[1])
+            return
+        if phase == "victory":
+            self.halt()
+            return
+        if phase != "fight":
             orb = self.wanted_orb(own, me, anywhere=True)
             if orb is not None:
                 self.travel(own, orb[1], orb[2])

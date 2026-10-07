@@ -34,7 +34,7 @@ SUSTAINED_EVERY = int(os.environ.get("SUSTAINED_CORRECT_EVERY", "15"))
 CORRECT_COLLISIONS = os.environ.get("CORRECT_COLLISIONS", "1") == "1"
 CLOCK_EVERY_MS, PROBE_EVERY_MS, PROBE_BALLS = 50, 500, 32
 RUN_SECONDS = float(os.environ.get("SERVER_RUN_SECONDS", "0"))
-MODE = os.environ.get("ARPG_MODE", "waves")
+MODE = os.environ.get("ARPG_MODE", "crawl")
 TEST_PICKS = int(os.environ.get("ARPG_TEST_PICKS", "0"))
 TEST_UPGRADES = {k: int(v) for k, v in (p.split(":") for p in os.environ.get("ARPG_TEST_UPGRADES", "").split(",") if p)}
 INTERMISSION_S = float(os.environ.get("INTERMISSION_S", "30"))
@@ -75,13 +75,16 @@ class ArpgServer:
         self.park = ServerPark()
         self.park.tickInterval = TICK_MS
         self.sync = ServerSync(self.park, self._send)
-        self.corrections = ContactCorrections(self.park, self.sync.actions, margin=0.1, static_boxes=world.BOXES,
+        self.corrections = ContactCorrections(self.park, self.sync.actions, margin=0.1, static_near=world.boxes_near,
                                               sustained_every_ticks=SUSTAINED_EVERY)
         self.rng = random.Random(11)
         self.mode, self.respawn_s = MODE, RESPAWN_S
         self.ents = Entities()
         self.state = ServerState(TICK_MS / 1000.0)
-        self.waves = Waves(self, int(os.environ.get("ARPG_FIRST_WAVE", "1")), WAVE_BASE, WAVE_STEP, INTERMISSION_S)
+        # The room the game is in: the crawl moves it along; waves and the sandbox stay in the hall.
+        self.room = int(os.environ.get("ARPG_FIRST_ROOM", "0")) if MODE == "crawl" else 0
+        self.waves = Waves(self, int(os.environ.get("ARPG_FIRST_WAVE", "1")), WAVE_BASE, WAVE_STEP, INTERMISSION_S,
+                           crawl=MODE == "crawl")
         self.peers = {}
         self.client_ids = itertools.count(1)
         self.respawns = []
@@ -134,7 +137,8 @@ class ArpgServer:
         peer = netproto.Peer(sock, lambda p, msg: self.on_message(client_id, msg),
                              lambda p: self.on_disconnect(client_id))
         self.peers[client_id] = peer
-        x, z = spatial.free_spot(self, (-world.ROOM_W / 2 + 2, -world.ROOM_W / 2 + 8), min_gap=2.0) or (-25.0, 0.0)
+        area = spatial.entry_area(self)
+        x, z = spatial.free_spot(self, area, min_gap=2.0) or ((area[0] + area[2]) / 2, (area[1] + area[3]) / 2)
         add_ball(self.park, ball_id, x=x, z=z, radius=world.PLAYER_RADIUS, max_velocity=world.PLAYER_SPEED,
                  agility=world.PLAYER_AGILITY, is_interactive=True)
         self.corrections.watch(ball_id)
@@ -205,6 +209,7 @@ class ArpgServer:
 
     def after_tick(self):
         # The systems, in order; Destiny has already moved every ball this tick.
+        world.sync_gates(self.park)
         grid = spatial.EnemyGrid(self)
         enemies.melee(self, grid)
         enemies.attack(self)
@@ -217,7 +222,7 @@ class ArpgServer:
         combat.expire_slows(self)
         enemies.expire_hastes(self)
         progression.update_respawns(self)
-        if MODE == "waves":
+        if MODE != "sandbox":
             self.waves.update()
         projectiles.update(self, grid)
 
@@ -264,12 +269,15 @@ class ArpgServer:
             print("[arpg]   players " + "  ".join("%d: lvl %s %s" % (b, (self.state.get(b) or {}).get("level"),
                                                                     (self.state.get(b) or {}).get("upgrades"))
                                               for _, b in self.player_balls()))
-            if MODE == "waves":
+            if MODE != "sandbox":
                 bosses = ["%d/%d%s" % (self.state.get(b)["hp"], self.state.get(b)["max_hp"], " enraged" if rage.active else "")
                           for b, rage in self.ents.each(Enrage)]
                 w = self.waves
-                print("[arpg]   wave %d  %s  remaining %s  alive players %d  boss %s" % (
-                    w.wave, w.phase, w.remaining, len(self.alive_players()), bosses or "-"))
+                balls = self.park.balls
+                strays = sorted((round(balls[e].x), round(balls[e].z)) for e in self.ents.of(Enemy)
+                                if e in balls and world.room_at(balls[e].x, balls[e].z) != self.room)
+                print("[arpg]   wave %d  room %d  %s  remaining %s  alive players %d  boss %s  strays %s" % (
+                    w.wave, self.room, w.phase, w.remaining, len(self.alive_players()), bosses or "-", strays or "-"))
             print("[arpg]   p50 ms: " + "  ".join("%s %.2f" % (n, p.percentile(0.5)) for n, p in self.phases.items()))
             for p in self.phases.values():
                 p.clear()
@@ -287,8 +295,8 @@ class ArpgServer:
         else:
             self.waves.start()
         netproto.serve(PORT, self.on_connect)
-        print("[arpg] %s mode, %d ms ticks, room %.0fx%.0f m, %d enemies, listening on %d" % (
-            MODE, TICK_MS, world.ROOM_W, world.ROOM_D, len(self.ents.of(Enemy)), PORT))
+        print("[arpg] %s mode, %d ms ticks, %d rooms, %d enemies, listening on %d" % (
+            MODE, TICK_MS, len(world.ROOMS), len(self.ents.of(Enemy)), PORT))
         for loop in (self.ai_loop, self.clock_loop, self.probe_loop, self.report_loop):
             carbonapp.spawn(loop)
         if RUN_SECONDS:

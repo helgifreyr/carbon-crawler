@@ -6,9 +6,10 @@ to make something that plays nothing like EVE (fast, direct control and crowds o
 
 ![A wave in progress](docs/media/screenshot.png)
 
-You play a mage in a torch-lit hall. Waves of imps, spitters, brutes, hounds, shamans, bloaters and shieldbearers come
-at you, with a Warlord every fifth wave. You level up, pick upgrades, and ready up at the shrine between waves. Several
-players can join one server, and AI mages can fill in for missing friends.
+You play a mage fighting through a torch-lit dungeon of five rooms. Each room is one fight against imps, spitters,
+brutes, hounds, shamans, bloaters and shieldbearers. Clearing it raises the gate to the next room, and the Warlord waits
+in the last. You level up and pick upgrades along the way. Several players can join one server, and AI mages can fill in
+for missing friends.
 
 - **Server-authoritative simulation.** Destiny runs the world at 10 ms ticks and replicates it with destiny.net, and
   a state channel carries HP, mana and events. Your own mage is predicted locally, so input shows up on the next frame.
@@ -62,7 +63,9 @@ set NET_HOST=<server ip>            (on another machine, before starting the cli
 | Tab | Switch to mouse controls (hold left to move) |
 | Esc | Menu, with music and sound volume |
 
-Click a spell slot to put a different spell on it. Between waves, walk to the glowing shrine to ready up.
+Click a spell slot to put a different spell on it. The run starts at the glowing shrine in the hall: ready up there, or
+wait a few seconds. The next room's fight starts once everyone has walked through its gate. A defeat, or a won run,
+starts over in the hall at level 1.
 
 `py -3.12 tools/package.py --zip` builds a standalone copy in `dist/carbon-crawler` (and a zip), with Python, the engine
 DLLs and the Visual C++ runtime included, for machines without the build tools.
@@ -71,6 +74,7 @@ DLLs and the Visual C++ runtime included, for machines without the build tools.
 
 | Where | What |
 |---|---|
+| `demo/arpg_layout.py` | The dungeon as data: rooms, their pillars, gates, corridors, props and torches |
 | `demo/arpg_world.py` | Content as data: `SPELLS`, `UPGRADES` and the enemy `KINDS` (bundles of behaviours such as `melee`, `slam`, `charge`, `mend`, `burst`, `shield`) |
 | `demo/arpg_server.py`, `demo/arpg_game/` | Networking and the tick; one component per behaviour per entity, and plain system functions over them |
 | `demo/arpg_client.py`, `demo/arpg_view/` | Prediction, HUD and input; an event bus feeding actors, effects, sounds and on-screen feedback |
@@ -91,14 +95,15 @@ sounds need no Wwise authoring. `ARPG_AUDIO=0` mutes the client, and `ARPG_MUSIC
 |---|---|
 | `blender -b --factory-startup -P tools/blender/build_arpg_assets.py` | Rebuilds every model, animation and texture in `res/arpg/` |
 | `py -3.12 tools/make_arpg_ui.py` | Redraws the HUD textures in `res/arpg/ui` |
-| `tools/arpg_waves_test.sh [companions] [seconds]` | Headless game: server and AI companions, printing the server's wave reports |
+| `tools/arpg_waves_test.sh [companions] [seconds]` | Headless game: server and AI companions, printing the server's room and wave reports |
 | `tools/arpg_capture.sh [name] [frame]` | Server, bot and client on a test port; saves one frame to `demo/out/<name>.png` |
 | `run_demo.ps1 -Script demo\model_gallery.py` | The placeables in a row (`GALLERY_LINEUP=hound,shaman`) |
 | `run_demo.ps1 -Script demo\anim_sheet.py` | Every clip as rows of frozen poses (`SHEET_MODELS=hound:hound`) |
 | `run_demo.ps1 -Script demo\fx_sheet.py` | Every particle effect at a few ages |
 
-Server settings are environment variables: `ARPG_MODE=waves|sandbox`, `ARPG_FIRST_WAVE`, `WAVE_SIZE=base,step`,
-`INTERMISSION_S`, `ENEMY_MIX` (sandbox), `TICK_MS` and `NET_PORT`. Client settings: `NET_HOST`, `NET_PORT`,
+Server settings are environment variables: `ARPG_MODE=crawl|waves|sandbox` (waves is endless waves in the hall),
+`ARPG_FIRST_ROOM` (crawl), `ARPG_FIRST_WAVE` (waves), `WAVE_SIZE=base,step`, `INTERMISSION_S`, `ENEMY_MIX` (sandbox),
+`TICK_MS` and `NET_PORT`. Client settings: `NET_HOST`, `NET_PORT`,
 `ARPG_CONTROLS=wasd|mouse`, `ARPG_PREDICT=1|0`, and `ARPG_DEBUG=1` for the network panel (also F3).
 
 Test scripts use port 47410, so they don't collide with a server on the default port 47400.

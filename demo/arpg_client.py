@@ -25,6 +25,7 @@ from arpg_menu import (BACKDROP, DEFAULT_BINDINGS, Box, LevelUpButton, Menu, Orb
                        load_settings, save_settings)
 from arpg_ui import Banner, BossBar, FloatingNumbers, WorldBars, projector
 from predict import OwnBallPredictor
+from scene import add_ball
 from netsim import NetSim
 from stats import Samples, TickTimer
 
@@ -90,7 +91,9 @@ class ArpgSim(NetSim):
     def _on_tick(self):
         self.state.apply_until(self.client.park.currentTime)
         super()._on_tick()
-        self.tracked_by_id.pop(world.ROOM, None)
+        world.sync_gates(self.client.park, self.predictor.park, add_ball)
+        for static_id in (world.ROOM, *world.gate_ids()):
+            self.tracked_by_id.pop(static_id, None)
         for ball_id, tracked in self.tracked_by_id.items():
             entity = self.state.get(ball_id)
             # Renaming makes the viewer rebuild the sphere, which is how a dead ball turns grey.
@@ -294,10 +297,13 @@ class ArpgSim(NetSim):
     def wave_status(self, game):
         if not game:
             return "enemies alive %d" % self.enemies_alive
+        room = world.ROOMS[game.get("room", 0)]["name"]
         if game["phase"] == "fight":
-            return "wave %d   enemies left %d" % (game["wave"], game.get("remaining", 0))
-        if game["phase"] == "defeat":
-            return "defeat"
+            return "%s   enemies left %d" % (room if game.get("crawl") else "wave %d" % game["wave"], game.get("remaining", 0))
+        if game["phase"] in ("defeat", "victory"):
+            return game["phase"]
+        if game["phase"] == "advance":
+            return "the gate to %s is open" % world.ROOMS[game["room"] + 1]["name"]
         return "wave %d in %.0f s" % (game["wave"] + 1, self.seconds_until(game["until"]))
 
 
@@ -776,22 +782,31 @@ class ArpgViewer(TrinityViewer):
         game = self.sim.state.get("game")
         if not game:
             return
-        seen = (game["wave"], game["phase"])
+        seen = (game["wave"], game["phase"], game.get("room", 0))
         if seen == getattr(self, "_wave_seen", None):
             return
         first = not hasattr(self, "_wave_seen")
         self._wave_seen = seen
-        wave, phase = seen
+        wave, phase, room = seen
+        crawl = game.get("crawl")
         if phase == "fight":
             boss = wave % world.BOSS_EVERY_WAVES == 0
-            self.banner.show("WAVE %d" % wave, "", 2.5, (1.0, 0.45, 0.3) if boss else (1.0, 1.0, 1.0))
+            title, subtitle = (world.ROOMS[room]["name"].upper(), "room %d of %d" % (room + 1, len(world.ROOMS))) if crawl                 else ("WAVE %d" % wave, "")
+            self.banner.show(title, subtitle, 2.5, (1.0, 0.45, 0.3) if boss else (1.0, 1.0, 1.0))
             self.audio.play("roar" if boss else "wave_start", self.cam.target)
-        elif phase == "defeat":
-            # A defeat starts a new run at level 1, and the spell bar starts over with it.
+        elif phase in ("defeat", "victory"):
+            # A defeat or a won run starts a new run at level 1, and the spell bar starts over with it.
             self.settings["bindings"].clear()
             self.settings["bindings"].update(DEFAULT_BINDINGS)
-            self.audio.play("defeat", self.cam.target)
-        elif wave > 0 and not first:
+            if phase == "victory":
+                self.banner.show("VICTORY", "the dungeon is cleared", 5.0, (1.0, 0.85, 0.4))
+                self.audio.play("levelup", self.cam.target)
+            else:
+                self.audio.play("defeat", self.cam.target)
+        elif phase == "advance" and not first:
+            self.banner.show("ROOM CLEARED", "on to %s" % world.ROOMS[room + 1]["name"], 3.0, (0.85, 0.95, 1.0))
+            self.audio.play("wave_clear", self.cam.target)
+        elif wave > 0 and not first and not crawl:
             self.audio.play("wave_clear", self.cam.target)
 
     def draw_telegraphs(self):

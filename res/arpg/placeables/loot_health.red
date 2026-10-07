@@ -12,7 +12,7 @@ visualModel:
                 parameters:
                 -   type: Tr2Vector4Parameter
                     name: "LightMapRect"
-                    value: [-32.000, -22.000, 0.016, 0.023]
+                    value: [-32.000, -24.000, 0.003, 0.021]
                 -   type: Tr2Vector4Parameter
                     name: "LightScale"
                     value: [1.500, 0.000, 0.000, 0.000]
@@ -39,7 +39,7 @@ visualModel:
                     value: [1.000, 0.400, 0.000, 0.000]
                 -   type: Tr2Vector4Parameter
                     name: "LightMapRect"
-                    value: [-32.000, -22.000, 0.016, 0.023]
+                    value: [-32.000, -24.000, 0.003, 0.021]
                 -   type: Tr2Vector4Parameter
                     name: "LightScale"
                     value: [1.500, 0.000, 0.000, 0.000]
