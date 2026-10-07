@@ -1251,6 +1251,17 @@ def main():
         color, height = stones(*args, **kw)
         save_image(name, color)
         save_image(name + "_n", normal_pixels(height, {"floor": 5.0, "wall": 3.5, "ground": 5.0}[name], 0.35))
+    for name, base, dark in (("cave_rock", (122, 110, 96), (58, 52, 48)), ("cave_floor", (86, 80, 72), (36, 33, 30))):
+        # Limestone: layered, blotchy and pitted rather than cut into blocks.
+        n, fine = noise(512, rng, 5), noise(512, rng, 7)
+        bands = 0.5 + 0.5 * np.sin(np.linspace(0, 14 * np.pi, 512))[:, None] * (0.6 + 0.4 * n)
+        mix = np.clip(0.55 * n + 0.25 * fine + 0.2 * bands, 0, 1)[..., None]
+        color = np.array(dark) / 255.0 * (1 - mix) + np.array(base) / 255.0 * mix
+        save_image(name, np.clip(color * (0.9 + 0.2 * fine[..., None]), 0, 1))
+        save_image(name + "_n", normal_pixels(0.7 * n + 0.3 * fine, 6.0, 0.25))
+        if name == "cave_rock":
+            # The tops of the rock, seen from above: the same stone, deep in shadow.
+            save_image("cave_top", np.clip(color * (0.9 + 0.2 * fine[..., None]), 0, 1) * 0.32)
     save_image("flat_n", np.concatenate([np.full((4, 4, 2), 0.5), np.ones((4, 4, 1)), np.full((4, 4, 1), 0.25)], axis=2))
     save_image("blob", blob_pixels())
     save_image("halo", halo_pixels())

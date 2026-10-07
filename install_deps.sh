@@ -15,3 +15,6 @@ export VCPKG_KEEP_ENV_VARS='GIT_CONFIG_COUNT;GIT_CONFIG_KEY_0;GIT_CONFIG_VALUE_0
     --triplet x64-windows-v143-internal \
     --host-triplet x64-windows-v143-internal \
     --disable-metrics "$@"
+
+# The server and the level editor generate levels with numpy; the game client doesn't need it.
+py -3.12 -m pip install --quiet --upgrade --target vendor/pydeps numpy==2.5.3

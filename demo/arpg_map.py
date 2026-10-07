@@ -94,21 +94,23 @@ class CellMap:
 
 class Level:
     """A map and its contents: rooms (name, rect, wave), gates (boxes), props (kind, x, z, yaw), torches (x, z, yaw),
-    the shrine, and a lightmap ({"rect", "png"}) baked for it."""
+    the shrine, a lightmap ({"rect", "png"}) baked for it, and a generated act's features (start, packs, boss...)."""
 
-    def __init__(self, name, cells, rooms=(), gates=(), props=(), torches=(), shrine=None, lightmap=None):
+    def __init__(self, name, cells, rooms=(), gates=(), props=(), torches=(), shrine=None, lightmap=None, features=None):
         self.name, self.cells = name, cells
         self.rooms, self.gates = list(rooms), list(gates)
         self.props, self.torches = list(props), list(torches)
         self.shrine, self.lightmap = shrine, lightmap
+        self.features = features or {}
 
     def payload(self):
         return {"name": self.name, "cells": self.cells.payload(), "rooms": self.rooms, "gates": self.gates,
-                "props": self.props, "torches": self.torches, "shrine": self.shrine, "lightmap": self.lightmap}
+                "props": self.props, "torches": self.torches, "shrine": self.shrine, "lightmap": self.lightmap,
+                "features": self.features}
 
     @classmethod
     def from_payload(cls, p):
         rooms = [dict(r, rect=tuple(r["rect"])) for r in p["rooms"]]
         return cls(p["name"], CellMap.from_payload(p["cells"]), rooms, [tuple(g) for g in p["gates"]],
                    [tuple(t) for t in p["props"]], [tuple(t) for t in p["torches"]],
-                   tuple(p["shrine"]) if p["shrine"] else None, p["lightmap"])
+                   tuple(p["shrine"]) if p["shrine"] else None, p["lightmap"], p.get("features"))

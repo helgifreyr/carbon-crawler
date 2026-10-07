@@ -39,6 +39,9 @@ class Companion:
     def on_message(self, message):
         if message[0] == "hello" and "level" in self.client.world:
             world.set_level(Level.from_payload(self.client.world["level"]))
+        elif message[0] == "level":
+            world.set_level(Level.from_payload(message[1]))
+            self.client.world.update(level=message[1], boxes=world.BOXES)
         elif message[0] in ("state", "state_full"):
             self.state.receive(message)
 

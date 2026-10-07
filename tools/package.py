@@ -179,6 +179,10 @@ def main():
     copy_tree(os.path.join(PYTHON_HOME, "Lib"), os.path.join(out, "python", "Lib"), STDLIB_SKIP)
     for pyd in glob.glob(os.path.join(PYTHON_HOME, "DLLs", "*.pyd")):
         shutil.copy2(pyd, dlls_out)
+    # numpy, and a plain Python for the server to generate the next act in a process of its own.
+    copy_tree(os.path.join(ROOT, "vendor", "pydeps"), os.path.join(out, "python", "pydeps"), {"bin", "__pycache__"})
+    for name in ("python.exe", "python312.dll"):
+        shutil.copy2(os.path.join(PYTHON_HOME, name), os.path.join(out, "python"))
 
     copy_tree(os.path.join(ROOT, "demo"), os.path.join(out, "app"), {"_deps", "out"})
     copy_tree(os.path.join(ROOT, "res"), os.path.join(out, "res"), {"effect", "testbanks"})

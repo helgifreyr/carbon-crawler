@@ -151,6 +151,8 @@ class NetClient:
         self.send("reset")
 
     def after_tick(self):
+        # A level change replaces the static ball, and the replacement arrives without its boxes.
+        self._rebuild_static_geometry()
         if self._refresh_after_tick:
             refresh_time_factors(self.park)
             self._refresh_after_tick = False

@@ -5,18 +5,18 @@ import destiny
 
 import arpg_world as world
 from arpg_game import combat, projectiles, spatial, spells
-from arpg_game.components import (BEHAVIOURS, Burster, Charger, Charging, Cooldown, Enemy, Enrage, Hasted, KeepRange, Melee,
+from arpg_game.components import (Asleep, BEHAVIOURS, Burster, Charger, Charging, Cooldown, Enemy, Enrage, Hasted, KeepRange, Melee,
                                   Mend, Rain, Ring, Shield, Slammer, Slowed, Spit, Winding)
 from scene import add_ball
 
 _ids = itertools.count(world.ENEMY_BASE)
 
 
-def spawn(g, kind):
-    """Adds an enemy ball of this kind, with one component per behaviour its KINDS entry lists."""
+def spawn(g, kind, spot=None):
+    """Adds an enemy ball of this kind, with one component per behaviour its KINDS entry lists, at spot or somewhere
+    in the current room away from the players."""
     spec = world.KINDS[kind]
-    spot = spatial.free_spot(g, spatial.room_area(g), min_player_distance=12.0,
-                             min_gap=1.5 + spec["radius"])
+    spot = spot or spatial.free_spot(g, spatial.room_area(g), min_player_distance=12.0, min_gap=1.5 + spec["radius"])
     if spot is None:
         return None
     eid = next(_ids)
@@ -260,13 +260,15 @@ def _rain(g, eid, e, rain, players):
     g.state.event(eid, "rain", points=points)
 
 
-def steer(g, aggro):
-    """Movement for every enemy: chase the nearest player, hold a firing distance, or wander when nobody is near."""
+def steer(g, aggro, around=None):
+    """Movement for every enemy: chase the nearest player, hold a firing distance, or wander when nobody is near.
+
+    With around(eid, e), an enemy that can't see its target asks it for a way round the rock instead."""
     players = g.alive_players()
     tick, balls = g.park.currentTime, g.park.balls
     for eid, enemy in g.ents.each(Enemy):
         e = balls.get(eid)
-        if e is None or g.ents.has(eid, Winding) or g.ents.has(eid, Charging):
+        if e is None or g.ents.has(eid, Winding) or g.ents.has(eid, Charging) or g.ents.has(eid, Asleep):
             continue
         burster = g.ents.get(eid, Burster)
         if burster is not None and burster.lit:
@@ -274,7 +276,9 @@ def steer(g, aggro):
         target = min(players, key=lambda p: (p.x - e.x) ** 2 + (p.z - e.z) ** 2, default=None)
         d = math.hypot(target.x - e.x, target.z - e.z) if target is not None else 1e9
         keep = g.ents.get(eid, KeepRange)
-        if d < aggro and keep is not None:
+        if around is not None and (d >= aggro or world.segment_hits_box(e.x, e.z, target.x, target.z, e.radius * 0.8)):
+            around(eid, e)
+        elif d < aggro and keep is not None:
             _keep_range(g, eid, e, keep, target, d, tick)
         elif d < aggro:
             g.sync.actions.follow_ball(eid, target.id, world.PLAYER_RADIUS + e.radius + 0.2)

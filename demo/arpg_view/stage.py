@@ -58,9 +58,9 @@ class Stage:
             self.add_static(placeable)
             if has_walls:
                 self.walls.append(placeable)
-        if level.shrine:
+        for x, z in world.SHRINES:
             shrine = self.placeable("shrine")
-            shrine.translation = (level.shrine[0], 0.0, level.shrine[1])
+            shrine.translation = (x, 0.0, z)
             self.add_static(shrine)
         for x, z, yaw in level.torches:
             torch = self.placeable("torch")
@@ -68,9 +68,14 @@ class Stage:
             torch.rotation = axis_quat((0.0, 1.0, 0.0), yaw)
             self.add_static(torch)
             self.torches.append([torch, None])
+        yaws = level.features.get("gate_yaws")
         for i, (x0, z0, x1, z1) in enumerate(level.gates):
             gate = self.placeable("gate")
             gate.translation = ((x0 + x1) / 2, 0.0, (z0 + z1) / 2)
+            if yaws:
+                # An arena's gates are one cell wide, half the portcullis model's span.
+                gate.rotation = axis_quat((0.0, 1.0, 0.0), yaws[i])
+                gate.scaling = (1.0, 1.0, (z1 - z0) / 4.0)
             self.add_static(gate)
             self.gates[world.GATE_BASE + i] = [gate, 0.0]
 

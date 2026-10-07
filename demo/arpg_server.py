@@ -11,7 +11,8 @@ import blue
 import destiny
 
 import arpg_world as world
-from arpg_game import combat, enemies, loot, progression, projectiles, spatial, spells
+from arpg_game import combat, enemies, loot, packs, progression, projectiles, spatial, spells
+from arpg_game.act import Act
 from arpg_game import movement as move
 from arpg_game.components import Enemy, Enrage, Player, Projectile
 from arpg_game.entities import Entities
@@ -34,11 +35,14 @@ SUSTAINED_EVERY = int(os.environ.get("SUSTAINED_CORRECT_EVERY", "15"))
 CORRECT_COLLISIONS = os.environ.get("CORRECT_COLLISIONS", "1") == "1"
 CLOCK_EVERY_MS, PROBE_EVERY_MS, PROBE_BALLS = 50, 500, 32
 RUN_SECONDS = float(os.environ.get("SERVER_RUN_SECONDS", "0"))
-MODE = os.environ.get("ARPG_MODE", "crawl")
+MODE = os.environ.get("ARPG_MODE", "act")
 TEST_PICKS = int(os.environ.get("ARPG_TEST_PICKS", "0"))
 TEST_UPGRADES = {k: int(v) for k, v in (p.split(":") for p in os.environ.get("ARPG_TEST_UPGRADES", "").split(",") if p)}
 INTERMISSION_S = float(os.environ.get("INTERMISSION_S", "30"))
 WAVE_AGGRO_RANGE = 200.0
+# An act's template (res/arpg/acts/<name>.json) and first seed; each later act takes the next seed.
+ACT_TEMPLATE = os.environ.get("ARPG_ACT", "caves")
+ACT_SEED = int(os.environ.get("ARPG_SEED", str(int(time.time()) % 100000)))
 WAVE_BASE, WAVE_STEP = (int(v) for v in os.environ.get("WAVE_SIZE", "8,4").split(","))
 SPELL_MESSAGES = {"cast": "bolt", "nova": "nova", "chain": "chain", "meteor": "meteor", "frost": "frost"}
 ENEMY_MIX = [(k, float(w)) for k, w in (part.split(":") for part in
@@ -72,6 +76,9 @@ class ArpgServer:
 
     def __init__(self):
         world.apply_settings()
+        if MODE == "act":
+            from arpg_gen import generate
+            world.set_level(generate.generate(ACT_TEMPLATE, ACT_SEED))
         level = world.LEVEL
         if level.lightmap is None:
             # The test level's torchlight is baked by the Blender build.
@@ -90,6 +97,7 @@ class ArpgServer:
         self.room = int(os.environ.get("ARPG_FIRST_ROOM", "0")) if MODE == "crawl" else 0
         self.waves = Waves(self, int(os.environ.get("ARPG_FIRST_WAVE", "1")), WAVE_BASE, WAVE_STEP, INTERMISSION_S,
                            crawl=MODE == "crawl")
+        self.act = Act(self, ACT_TEMPLATE, ACT_SEED) if MODE == "act" else None
         self.peers = {}
         self.client_ids = itertools.count(1)
         self.respawns = []
@@ -183,6 +191,9 @@ class ArpgServer:
         if kind == "reset":
             self.sync.join(client_id, ball_id)
             return
+        if kind == "ai":
+            self.state.set(ball_id, ai=True)
+            return
         if kind == "cast":
             self.shots["received"] += 1
         if not self.alive(ball_id):
@@ -227,7 +238,9 @@ class ArpgServer:
         combat.expire_slows(self)
         enemies.expire_hastes(self)
         progression.update_respawns(self)
-        if MODE != "sandbox":
+        if self.act is not None:
+            self.act.update()
+        elif MODE != "sandbox":
             self.waves.update()
         projectiles.update(self, grid)
 
@@ -239,7 +252,12 @@ class ArpgServer:
             self.respawns = [t for t in self.respawns if t > now]
             for _ in due:
                 enemies.spawn(self, self.pick_kind())
-            enemies.steer(self, AGGRO_RANGE if MODE == "sandbox" else WAVE_AGGRO_RANGE)
+            if self.act is not None:
+                packs.update(self)
+                field = packs.flow_field(self)
+                enemies.steer(self, packs.AGGRO_M * 2, lambda eid, e: packs.chase_around(self, eid, e, field))
+            else:
+                enemies.steer(self, AGGRO_RANGE if MODE == "sandbox" else WAVE_AGGRO_RANGE)
 
     def clock_loop(self):
         while True:
@@ -274,7 +292,19 @@ class ArpgServer:
             print("[arpg]   players " + "  ".join("%d: lvl %s %s" % (b, (self.state.get(b) or {}).get("level"),
                                                                     (self.state.get(b) or {}).get("upgrades"))
                                               for _, b in self.player_balls()))
-            if MODE != "sandbox":
+            if self.act is not None:
+                a = self.act
+                asleep = sum(1 for eid in self.ents.of(Enemy) if packs.asleep(self, eid))
+                balls = self.park.balls
+                awake = [(round(balls[e].x), round(balls[e].z)) for e in self.ents.of(Enemy)
+                         if e in balls and not packs.asleep(self, e)]
+                print("[arpg]   act %s seed %s  %s  checkpoint %d  enemies %d (%d asleep)  next act %s  awake at %s  "
+                      "players at %s  arenas %s" % (world.LEVEL.name, world.LEVEL.features.get("seed"), a.phase, a.checkpoint,
+                                         len(self.ents.of(Enemy)), asleep, "ready" if a.next_level is not None
+                                         else "generating", awake[:4] or "-",
+                                         [(round(p.x), round(p.z)) for p in self.alive_players()],
+                                         [r["state"] for r in a.arenas]))
+            elif MODE != "sandbox":
                 bosses = ["%d/%d%s" % (self.state.get(b)["hp"], self.state.get(b)["max_hp"], " enraged" if rage.active else "")
                           for b, rage in self.ents.each(Enrage)]
                 w = self.waves
@@ -297,6 +327,8 @@ class ArpgServer:
         if MODE == "sandbox":
             for _ in range(ENEMIES):
                 enemies.spawn(self, self.pick_kind())
+        elif self.act is not None:
+            self.act.start()
         else:
             self.waves.start()
         netproto.serve(PORT, self.on_connect)

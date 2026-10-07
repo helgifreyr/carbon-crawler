@@ -198,5 +198,19 @@ class Loot:
     expires: int
 
 
+@dataclass(slots=True)
+class Home:
+    """An enemy placed in a level as part of pack: it gives up a chase beyond leash metres from home (0: never)."""
+    x: float
+    z: float
+    pack: int
+    leash: float
+
+
+@dataclass(slots=True)
+class Asleep:
+    pass
+
+
 BEHAVIOURS = {"melee": Melee, "slam": Slammer, "keep_range": KeepRange, "spit": Spit, "ring": Ring, "rain": Rain,
               "enrage": Enrage, "mend": Mend, "charge": Charger, "burst": Burster, "shield": Shield}

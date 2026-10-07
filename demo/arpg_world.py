@@ -164,17 +164,19 @@ PROJECTILE_AGILITY = 0.01 * FRICTION_OVER_MASS
 
 # The level being played, and what follows from it; set_level replaces them all. Every process starts on the test level:
 # the server may pick another, and clients take whatever the server sends.
-LEVEL = ROOMS = GATES = BOXES = BOUNDS = SHRINE = None
+LEVEL = ROOMS = GATES = BOXES = BOUNDS = SHRINE = SHRINES = None
 
 
 def set_level(level):
     """Makes level the one every box test, room lookup and gate here refers to."""
-    global LEVEL, ROOMS, GATES, BOXES, BOUNDS, SHRINE, _index
+    global LEVEL, ROOMS, GATES, BOXES, BOUNDS, SHRINE, SHRINES, _index
     LEVEL, ROOMS, GATES, SHRINE = level, level.rooms, level.gates, level.shrine
+    # Every shrine: an act's checkpoints (the first is where it starts), or the level's one shrine.
+    SHRINES = [tuple(c) for c in level.features.get("checkpoints", [])] or ([SHRINE] if SHRINE else [])
     BOUNDS = level.cells.extent
     props = [(x - PROP_SIZE[k] / 2, z - PROP_SIZE[k] / 2, x + PROP_SIZE[k] / 2, z + PROP_SIZE[k] / 2)
              for k, x, z, _ in level.props if k in PROP_SIZE]
-    shrine = [(SHRINE[0] - SHRINE_HALF, SHRINE[1] - SHRINE_HALF, SHRINE[0] + SHRINE_HALF, SHRINE[1] + SHRINE_HALF)]         if SHRINE else []
+    shrine = [(x - SHRINE_HALF, z - SHRINE_HALF, x + SHRINE_HALF, z + SHRINE_HALF) for x, z in SHRINES]
     BOXES = level.cells.wall_boxes() + props + shrine
     _index = {}
     for box in BOXES:

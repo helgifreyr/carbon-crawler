@@ -2,7 +2,7 @@
 setlocal
 set "HERE=%~dp0"
 set "PYTHONHOME=%HERE%python"
-set "PYTHONPATH=%HERE%bin;%HERE%bin\python;%HERE%app;%HERE%python\Lib;%HERE%python\DLLs"
+set "PYTHONPATH=%HERE%bin;%HERE%bin\python;%HERE%app;%HERE%python\Lib;%HERE%python\DLLs;%HERE%python\pydeps"
 set "CARBON_BIN=%HERE%bin"
 set "BUILDFLAVOR=internal"
 set "PYTHONUNBUFFERED=1"

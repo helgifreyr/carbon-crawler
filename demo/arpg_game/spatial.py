@@ -39,13 +39,16 @@ class EnemyGrid:
 
 
 def room_area(g, inset=2.0):
-    """The current room's floor, inset from its walls, as (x0, z0, x1, z1)."""
-    x0, z0, x1, z1 = world.room_rect(g.room)
+    """The current room's floor (or an act's whole extent), inset from its walls, as (x0, z0, x1, z1)."""
+    x0, z0, x1, z1 = world.BOUNDS if getattr(g, "act", None) is not None else world.room_rect(g.room)
     return x0 + inset, z0 + inset, x1 - inset, z1 - inset
 
 
 def entry_area(g):
-    """The strip just inside the current room's west wall, where players arrive."""
+    """Where players arrive: around the last checkpoint in an act, else just inside the current room's west wall."""
+    if getattr(g, "act", None) is not None:
+        x, z = g.act.arrival()
+        return x - 3.0, z - 3.0, x + 3.0, z + 3.0
     x0, z0, _, z1 = world.room_rect(g.room)
     return x0 + 2.0, max(z0 + 2.0, -6.0), x0 + 8.0, min(z1 - 2.0, 6.0)
 

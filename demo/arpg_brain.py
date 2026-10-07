@@ -11,6 +11,8 @@ from arpg_state import mana_at
 
 MANA = {name: spell["mana"] for name, spell in world.SPELLS.items()}
 FOLLOW_M, KEEP_CLEAR_M, ENGAGE_M = 6.0, 3.2, 14.0
+# How far away an enemy is still worth walking over to, and how close a route point counts as reached.
+HUNT_M, ROUTE_REACHED_M = 30.0, 6.0
 SHRINE_STAND_M = 2.0
 LOOT_SEEK_M = 16.0
 REPLAN_S, STUCK_S, STUCK_M = 0.6, 1.0, 0.35
@@ -75,6 +77,7 @@ class Brain:
         self.route, self.goal, self.replan_at = [], None, 0
         self.track, self.moving, self.unstick_until, self.unstick_dir = [], False, 0, (0.0, 0.0)
         self.dangers, self.lanes, self.roll_ready, self.jump_ready = [], [], 0, 0
+        self.route_level, self.route_k = None, 0
 
     def warn(self, key, name, data):
         """Hears an event from the server; slams and meteor rain become areas to be out of when they land."""
@@ -106,7 +109,8 @@ class Brain:
 
     def leader(self, own):
         humans = [b for b in self.balls(world.PLAYER_BASE, world.ENEMY_BASE)
-                  if b.id != own.id and not (self.state.get(b.id) or {}).get("dead")]
+                  if b.id != own.id and not (self.state.get(b.id) or {}).get("dead")
+                  and not (self.state.get(b.id) or {}).get("ai")]
         return min(humans, key=lambda b: math.hypot(b.x - own.x, b.z - own.z), default=None)
 
     def _now(self):
@@ -166,6 +170,9 @@ class Brain:
         me = self.me()
         if own is None or not me or me.get("dead"):
             return
+        if not me.get("ai"):
+            # Other AI mages follow humans only, so say what we are.
+            self.client.send("ai")
         if me.get("offer") and self.rng.random() < 0.05:
             self.acts.pick(self.rng.randrange(len(me["offer"])))
         if self.check_stuck(own):
@@ -175,6 +182,9 @@ class Brain:
             return
         game = self.state.get("game") or {}
         phase = game.get("phase", "fight")
+        if game.get("mode") == "act":
+            # An act is one long fight: there is nothing to wait for, apart from the next act loading.
+            phase = "victory" if phase in ("defeat", "loading") else "fight"
         if phase == "advance":
             # Through the open gate and well into the next room, where the next fight starts.
             x0, _, x1, _ = world.room_rect(game.get("room", 0) + 1)
@@ -282,15 +292,33 @@ class Brain:
                 self.acts.direction(ax, az)
         elif orb is not None:
             self.travel(own, orb[1], orb[2])
-        elif enemies and (enemies[0][0] > ENGAGE_M or not self.clear_shot(own, enemies[0][1])):
+        elif enemies and enemies[0][0] < HUNT_M and (enemies[0][0] > ENGAGE_M or not self.clear_shot(own, enemies[0][1])):
             # Nothing to shoot from here: go and find it, around the walls.
             _, e = enemies[0]
             self.travel(own, e.x, e.z)
         elif leader is not None and math.hypot(leader.x - own.x, leader.z - own.z) > FOLLOW_M:
             side = 1.0 if own.id % 2 else -1.0
             self.travel(own, leader.x + side * 2.0, leader.z + 2.0)
+        elif leader is None and self.act_goal(own) is not None:
+            self.travel(own, *self.act_goal(own))
         else:
             self.halt()
+
+    def act_goal(self, own):
+        """In an act with nobody to follow: the exit once it's open, else the next point along the main route."""
+        game = self.state.get("game") or {}
+        feats = world.LEVEL.features
+        if game.get("mode") != "act" or not feats:
+            return None
+        if game.get("exit_open"):
+            return tuple(feats["exit"])
+        route = feats["route"]
+        if self.route_level is not world.LEVEL:
+            self.route_level, self.route_k = world.LEVEL, 0
+        while self.route_k < len(route) - 1 and math.hypot(route[self.route_k][0] - own.x,
+                                                          route[self.route_k][1] - own.z) < ROUTE_REACHED_M:
+            self.route_k += 1
+        return tuple(route[self.route_k])
 
     def kind(self, e):
         return (self.state.get(e.id) or {}).get("kind")

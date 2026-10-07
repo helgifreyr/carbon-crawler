@@ -62,6 +62,16 @@ def award_xp(g, ball_id, amount):
     apply_stats(g, ball_id, heal=True)
 
 
+def grant_pick(g, ball_id):
+    """One more upgrade to choose, as a reward."""
+    entity = g.state.get(ball_id)
+    if entity is None:
+        return
+    g.state.set(ball_id, picks=entity.get("picks", 0) + 1)
+    if not entity.get("offer"):
+        g.state.set(ball_id, offer=make_offer(g, g.state.get(ball_id)))
+
+
 def place_player(g, ball_id):
     """Moves a player to a free spot where players arrive in the current room."""
     area = spatial.entry_area(g)

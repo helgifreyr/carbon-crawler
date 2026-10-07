@@ -4,6 +4,7 @@ import math
 import os
 
 import cmf
+from arpg_view.cave_mesh import CaveBuilder
 from arpg_map import CELL, FLOOR
 
 RES_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "res")
@@ -53,6 +54,13 @@ def load_kit(path=KIT_PATH):
     return kit
 
 
+def front_face(piece):
+    """+1 if a triangle's (b - a) x (c - a) points the way its normal does in the kit, -1 if the other way."""
+    (a, n, _), (b, _, _), (c, _, _) = piece.groups["up"][:3]
+    cross_y = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2])
+    return 1 if cross_y * n[1] > 0 else -1
+
+
 def world_uv(position, normal, scale):
     # The same projection the Blender build used for the old whole-dungeon meshes (Blender's y is the engine's -z).
     x, y, z = position
@@ -90,11 +98,11 @@ class MeshBuilder:
         return True
 
 
-def red_text(meshes):
+def red_text(meshes, looks):
     """A placeable file holding several (mesh path, kind, light) meshes; light is (rect, lightmap texture path)."""
     lines = ["type: WodPlaceableRes", "visualModel:", "    type: Tr2Model", "    meshes:"]
     for mesh_path, kind, light in meshes:
-        lines += mesh_lines(mesh_path, *LOOKS[kind], light=light)
+        lines += mesh_lines(mesh_path, *looks[kind], light=light)
     return "\n".join(lines) + "\n"
 
 
@@ -119,6 +127,14 @@ def mesh_lines(mesh_path, texture, normal_map, effect=EFFECT, params=None, light
 
 
 # What each kind of level mesh looks like: (texture, normal map, effect, parameters).
+CAVE_LOOKS = {
+    "walls": ("cave_rock", "res:/arpg/textures/cave_rock_n.png", WALL_EFFECT,
+              {"SeeThrough": (0, -1000, 0, 0), "EyePos": (0, 0, 0, 1), "Surface": (1.0, 0.35, 12.0, 0.2)}),
+    "tops": ("cave_top", "res:/arpg/textures/cave_rock_n.png", WALL_EFFECT,
+             {"SeeThrough": (0, -1000, 0, 0), "EyePos": (0, 0, 0, 1), "Surface": (1.0, 0.2, 12.0, 0.2)}),
+    "floor": ("cave_floor", "res:/arpg/textures/cave_floor_n.png", EFFECT, {"Surface": (1.0, 0.45, 14.0, 0.0)}),
+    "ground": ("cave_top", "res:/arpg/textures/cave_rock_n.png", EFFECT, {"Surface": (1.0, 0.2, 12.0, 0.0)}),
+}
 LOOKS = {
     "walls": ("wall", "res:/arpg/textures/wall_n.png", WALL_EFFECT,
               {"SeeThrough": (0, -1000, 0, 0), "EyePos": (0, 0, 0, 1), "Surface": (1.0, 0.4, 16.0, 0.25)}),
@@ -137,12 +153,21 @@ def build(level, out_dir, prefix, light, kit=None):
     def builder(kind, ci, cj):
         return builders.setdefault((kind, ci, cj), MeshBuilder())
 
+    caves = level.features.get("tileset") == "caves"
+    looks = dict(LOOKS, **CAVE_LOOKS) if caves else LOOKS
+    if caves:
+        rock = CaveBuilder(cells, front_face(kit["floor"]), lambda p, n: world_uv(p, n, 2.5))
+        for j in range(cells.nz + 1):
+            for i in range(cells.nx + 1):
+                chunk = (min(i, cells.nx - 1) // CHUNK, min(j, cells.nz - 1) // CHUNK)
+                rock.corner(builder("walls", *chunk), builder("tops", *chunk), i, j)
     for j in range(cells.nz):
         for i in range(cells.nx):
             x0, z0, x1, z1 = cells.cell_rect(i, j)
             cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
             chunk = (i // CHUNK, j // CHUNK)
-            if cells.get(i, j) == FLOOR:
+            if cells.get(i, j) == FLOOR or (caves and cells.is_wall(i, j)):
+                # Under cave rock too: the rough walls leave slivers of a wall cell's floor in view.
                 builder("floor", *chunk).add(kit["floor"], cx, cz)
             elif cells.is_wall(i, j):
                 hidden = ["down"] + [side for (di, dj), side in SIDES.items() if cells.is_wall(i + di, j + dj)]
@@ -167,6 +192,6 @@ def build(level, out_dir, prefix, light, kit=None):
     for (ci, cj), meshes in sorted(chunks.items()):
         name = "%s_chunk_%d_%d.red" % (prefix, ci, cj)
         with open(os.path.join(out_dir, name), "w", newline="\n") as f:
-            f.write(red_text(meshes))
-        placed.append((any(kind == "walls" for _, kind, _ in meshes), name))
+            f.write(red_text(meshes, looks))
+        placed.append((any(kind in ("walls", "tops") for _, kind, _ in meshes), name))
     return placed

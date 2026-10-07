@@ -36,7 +36,7 @@ try {
     $env:PYTHONHOME = "$triplet\tools\python3"
     $env:PYTHONPATH = @(
         $run, "$triplet\bin", "$triplet\lib", "$triplet\bin\python", "$triplet\python",
-        "$triplet\tools\python3\Lib", "$triplet\tools\python3\DLLs"
+        "$triplet\tools\python3\Lib", "$triplet\tools\python3\DLLs", "$PSScriptRoot\vendor\pydeps"
     ) -join ";"
     $env:BUILDFLAVOR = "internal"
     $env:CARBON_BIN = "$triplet\bin"

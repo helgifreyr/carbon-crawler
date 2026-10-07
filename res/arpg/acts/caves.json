@@ -1,0 +1,25 @@
+{
+  "name": "The Sunken Caves",
+  "tileset": "caves",
+  "processes": ["karst"],
+  "shape": {"aspect": 2.2},
+  "nodes": [
+    {"id": "entrance", "type": "start", "size": [220, 320]},
+    {"id": "passage", "type": "path", "repeat": [2, 3], "size": [350, 600]},
+    {"id": "grotto", "type": "checkpoint", "size": [180, 260]},
+    {"id": "pit", "type": "arena", "size": [350, 480]},
+    {"id": "deeps", "type": "path", "repeat": [1, 2], "size": [400, 700]},
+    {"id": "hoard", "type": "vault", "chance": 0.7, "size": [140, 220]},
+    {"id": "cistern", "type": "vault", "chance": 0.5, "size": [140, 220]},
+    {"id": "lair", "type": "boss", "size": [550, 750]}
+  ],
+  "edges": [
+    ["entrance", "passage"],
+    ["passage", "grotto"],
+    ["grotto", "pit"],
+    ["pit", "deeps"],
+    ["deeps", "lair"],
+    ["passage", "hoard", "branch"],
+    ["deeps", "cistern", "branch"]
+  ]
+}

@@ -20,6 +20,7 @@ from arpg_view.effects import Effects
 from arpg_view.events import Event, EventBus
 from arpg_view.feedback import Feedback
 from arpg_view.sounds import Sounds
+from arpg_view.automap import Automap
 from arpg_view.stage import Stage
 from arpg_menu import (BACKDROP, DEFAULT_BINDINGS, Box, LevelUpButton, Menu, Orb, Picture, SpellBar, UpgradeScreen,
                        load_settings, save_settings)
@@ -125,12 +126,22 @@ class ArpgSim(NetSim):
         kind = message[0]
         if kind == "hello" and "level" in self.client.world:
             world.set_level(Level.from_payload(self.client.world["level"]))
+        elif kind == "level":
+            self.change_level(message[1])
         elif kind == "score":
             self.kills, self.enemies_alive = message[1], message[2]
         elif kind in ("state", "state_full"):
             self.state.receive(message)
         elif kind == "ack":
             self.predictor.on_ack(message[1], message[2])
+
+    def change_level(self, payload):
+        """A new act: new walls for every park here, and the prediction's world rebuilt from scratch."""
+        world.set_level(Level.from_payload(payload))
+        self.client.world.update(level=payload, boxes=world.BOXES,
+                                 gates={world.GATE_BASE + i: box for i, box in enumerate(world.GATES)})
+        self.predictor.park, self.predictor.ready = None, False
+        self.predictor.reset()
 
     def own_entity(self):
         return self.state.get(self.client.own_ball) or {}
@@ -300,6 +311,8 @@ class ArpgSim(NetSim):
     def wave_status(self, game):
         if not game:
             return "enemies alive %d" % self.enemies_alive
+        if game.get("mode") == "act":
+            return "%s   %s   checkpoint %d" % (game.get("act"), game.get("phase"), game.get("checkpoint", 0) + 1)
         room = world.ROOMS[game.get("room", 0)]["name"]
         if game["phase"] == "fight":
             return "%s   enemies left %d" % (room if game.get("crawl") else "wave %d" % game["wave"], game.get("remaining", 0))
@@ -410,12 +423,14 @@ class ArpgViewer(TrinityViewer):
         if self.use_meshes:
             self.bus = EventBus()
             self.stage = Stage(trinity)
+            self.automap = None
             self.actors = Actors(self.stage, self.bus)
             self.effects = Effects(self.stage, self.bus, self.actors.get)
             self.audio = ArpgAudio()
             self.audio.set_volumes(self.settings["music_volume"], self.settings["sound_volume"])
             Sounds(self.bus, self.audio)
             Feedback(self.bus, self)
+            self.bus.on(("arena", "arena_clear", "vault"), self.on_act_event)
             self.mesh_timer, self.frame_ms = TickTimer(), Samples()
             self.grid.ClearLines()
             self.grid.SubmitChanges()
@@ -482,6 +497,13 @@ class ArpgViewer(TrinityViewer):
         self.announce_waves()
         self.audio.set_track(self.music_track())
         self.banner.update(dt, width, height)
+        if self.automap is None:
+            self.automap = Automap(trinity, self.popups, self.stage.gen_dir)
+        if self.stage.level is world.LEVEL and self.automap.level is not world.LEVEL:
+            self.automap.set_level(world.LEVEL, self.cam.yaw)
+        game = self.sim.state.get("game") or {}
+        self.automap.update(dt, own.last if own is not None else None,
+                            world.LEVEL.features.get("exit") if game.get("exit_open") else None, width, height)
         me = self.sim.own_entity()
         self.menus.displayWidth, self.menus.displayHeight = width, height
         level = me.get("level", 1)
@@ -498,6 +520,10 @@ class ArpgViewer(TrinityViewer):
         self.update_pointer(dt, width, height)
         boss = next((e for k, e in self.sim.state.entities.items() if isinstance(e, dict) and e.get("kind") == "warlord"),
                     None)
+        game = self.sim.state.get("game") or {}
+        if game.get("mode") == "act" and game.get("phase") != "boss":
+            # An act's Warlord sleeps in its lair from the start; its bar shows once it wakes.
+            boss = None
         self.boss_bar.update(boss, width, height)
         # The listener sits on the followed ball, facing the way the camera looks across the floor.
         self.audio.update(self.cam.target, (-math.sin(self.cam.yaw), 0.0, -math.cos(self.cam.yaw)))
@@ -696,14 +722,16 @@ class ArpgViewer(TrinityViewer):
         game = self.sim.state.get("game")
         if game is None:
             return True
+        if game.get("mode") == "act":
+            return game.get("phase") in ("explore", "exit")
         return game.get("phase") != "fight"
 
     def near_shrine(self):
         x, _, z = self.sim.own_position()
-        return math.hypot(x - world.SHRINE[0], z - world.SHRINE[1]) <= world.SHRINE_RANGE
+        return any(math.hypot(x - sx, z - sz) <= world.SHRINE_RANGE for sx, sz in world.SHRINES)
 
     def clicked_shrine(self, point):
-        if math.hypot(point[0] - world.SHRINE[0], point[2] - world.SHRINE[1]) > 1.6:
+        if all(math.hypot(point[0] - sx, point[2] - sz) > 1.6 for sx, sz in world.SHRINES):
             return False
         if self.shrine_usable() and self.near_shrine():
             self.menu_open = "shrine"
@@ -734,7 +762,7 @@ class ArpgViewer(TrinityViewer):
         if self.menu_open == "esc":
             self.esc_menu.show("MENU", "the game keeps running while this is open", [
                 ("Resume", "", self.close_menu, True, "resume"),
-                ("Controls: %s" % ("WASD" if self.scheme == "wasd" else "mouse"), "Tab also switches",
+                ("Controls: %s" % ("WASD" if self.scheme == "wasd" else "mouse"), "click to switch",
                  self.switch_scheme, True, "controls"),
                 ("Music", "%d%%" % round(100 * self.settings["music_volume"]), None, True, "music",
                  self.settings["music_volume"] == 0, self.settings["music_volume"],
@@ -751,6 +779,11 @@ class ArpgViewer(TrinityViewer):
             return
         ready = bool(me.get("ready"))
         game = self.sim.state.get("game") or {}
+        if game.get("mode") == "act":
+            self.shrine_menu.show("THE SHRINE", "you will come back to life here if you fall", [
+                ("Upgrades", "%d to choose" % me.get("picks", 0) if me.get("picks") else "",
+                 lambda: setattr(self, "menu_open", "upgrades"), True, "upgrades")], width, height)
+            return
         countdown = "next wave in %.0f s" % self.sim.seconds_until(game["until"]) if game.get("until") else ""
         items = [("Ready for the next wave" if not ready else "Ready - waiting for the others", countdown,
                   lambda: self.sim.client.send("ready", not ready), bool(game), "ready"),
@@ -778,6 +811,8 @@ class ArpgViewer(TrinityViewer):
         game = self.sim.state.get("game")
         if game is None:
             return "fight"
+        if game.get("mode") == "act":
+            return {"boss": "boss", "explore": "fight"}.get(game.get("phase"), "calm")
         if game.get("phase") != "fight":
             return "calm"
         boss = game.get("wave", 0) % world.BOSS_EVERY_WAVES == 0
@@ -786,6 +821,9 @@ class ArpgViewer(TrinityViewer):
     def announce_waves(self):
         game = self.sim.state.get("game")
         if not game:
+            return
+        if game.get("mode") == "act":
+            self.announce_act(game)
             return
         seen = (game["wave"], game["phase"], game.get("room", 0))
         if seen == getattr(self, "_wave_seen", None):
@@ -814,12 +852,55 @@ class ArpgViewer(TrinityViewer):
         elif wave > 0 and not first and not crawl:
             self.audio.play("wave_clear", self.cam.target)
 
+    def on_act_event(self, event):
+        if event.name == "arena":
+            self.banner.show("THE GATES CLOSE" if event.data["wave"] == 1 else "WAVE %d" % event.data["wave"],
+                             "survive three waves", 2.5, (1.0, 0.55, 0.35))
+            self.audio.play("roar" if event.data["wave"] == 1 else "wave_start", self.cam.target)
+        elif event.name == "arena_clear":
+            self.banner.show("THE GATES OPEN", "", 2.5, (0.85, 0.95, 1.0))
+            self.audio.play("wave_clear", self.cam.target)
+        elif event.name == "vault":
+            self.banner.show("TREASURE", "an extra upgrade for everyone (U)", 3.0, (1.0, 0.85, 0.4))
+            self.audio.play("levelup", self.cam.target)
+
+    def announce_act(self, game):
+        seen = (game.get("seed"), game.get("phase"), game.get("checkpoint", 0))
+        before = getattr(self, "_act_seen", None)
+        if seen == before:
+            return
+        self._act_seen = seen
+        seed, phase, checkpoint = seen
+        if before is None or seed != before[0]:
+            self.banner.show(str(game.get("act", "")).upper(), "find the Warlord and the way on", 3.5, (0.85, 0.95, 1.0))
+            self.audio.play("wave_start", self.cam.target)
+        elif phase != before[1]:
+            if phase == "boss":
+                self.banner.show("THE WARLORD", "", 2.5, (1.0, 0.45, 0.3))
+                self.audio.play("roar", self.cam.target)
+            elif phase == "exit":
+                self.banner.show("THE WAY ON IS OPEN", "everyone to the light", 3.5, (0.55, 0.85, 1.0))
+                self.audio.play("wave_clear", self.cam.target)
+            elif phase == "defeat":
+                self.settings["bindings"].clear()
+                self.settings["bindings"].update(DEFAULT_BINDINGS)
+                self.audio.play("defeat", self.cam.target)
+        elif checkpoint > before[2]:
+            self.banner.show("CHECKPOINT", "you will come back to life here", 2.5, (1.0, 0.85, 0.4))
+            self.audio.play("levelup", self.cam.target)
+
     def draw_telegraphs(self):
         self.effects.draw(self.add_ring, self.overlay.AddLine)
+        pulse = 0.5 + 0.5 * math.sin(self.stage.clock * 3.0)
         if self.shrine_usable():
-            pulse = 0.5 + 0.5 * math.sin(self.stage.clock * 3.0)
             color = (1.0, 0.8, 0.35, 0.35 + 0.4 * pulse) if self.near_shrine() else (1.0, 0.8, 0.35, 0.2 + 0.2 * pulse)
-            self.add_ring((world.SHRINE[0], -0.45, world.SHRINE[1]), world.SHRINE_RANGE, color, segments=48)
+            for sx, sz in world.SHRINES:
+                self.add_ring((sx, -0.45, sz), world.SHRINE_RANGE, color, segments=48)
+        game = self.sim.state.get("game") or {}
+        if game.get("exit_open") and world.LEVEL.features.get("exit"):
+            ex, ez = world.LEVEL.features["exit"]
+            for k in range(3):
+                self.add_ring((ex, -0.45, ez), 1.2 + k * 0.9 + pulse * 0.5, (0.55, 0.85, 1.0, 0.75 - 0.2 * k), segments=48)
 
     def do_spell(self, name):
         target = self._pick(*self.mouse) if self.mouse else getattr(self, "test_target", None)
@@ -865,8 +946,8 @@ class ArpgViewer(TrinityViewer):
             self.do_jump()
         elif key == VK_F3:
             self.sim.debug = not self.sim.debug
-        elif key == VK_TAB:
-            self.switch_scheme()
+        elif key == VK_TAB and self.use_meshes and self.automap is not None:
+            self.automap.toggle()
         elif key == ord("P"):
             self.sim.toggle_prediction()
         elif key == ord("U"):

@@ -41,6 +41,9 @@ def push_enemy(g, eid, vx, vz):
 
 def hit_enemy(g, eid, amount, owner, push=None):
     """Damages an enemy, killing it at 0 HP; True if it died."""
+    if g.mode == "act":
+        from arpg_game import packs
+        packs.wake_if_asleep(g, eid)
     if g.state.damage(eid, amount):
         kill_enemy(g, eid, owner)
         return True
@@ -129,5 +132,5 @@ def player_died(g, ball_id):
     g.state.set(ball_id, dead=True)
     g.sync.actions.stop(ball_id)
     player = g.ents.get(ball_id, Player)
-    if g.mode == "sandbox" and player is not None:
+    if g.mode in ("sandbox", "act") and player is not None:
         player.respawn_at = g.park.currentTime + g.ticks_for(world.PLAYER_DEAD_S)
