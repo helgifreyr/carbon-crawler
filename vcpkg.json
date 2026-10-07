@@ -1,0 +1,38 @@
+{
+  "name": "carbon-crawler",
+  "version": "0.0.1",
+  "dependencies": [
+    "carbon-destiny",
+    "carbon-geo2",
+    {
+      "name": "carbon-trinity",
+      "features": [
+        "dx11",
+        "shader-compiler"
+      ]
+    },
+    "carbon-audio",
+    {
+      "name": "carbon-exefile-interpreter",
+      "host": true
+    }
+  ],
+  "overrides": [
+    {
+      "name": "openssl",
+      "version": "1.1.1k#8"
+    },
+    {
+      "name": "libpng",
+      "version": "1.6.47"
+    },
+    {
+      "name": "openexr",
+      "version": "3.2.4#0"
+    },
+    {
+      "name": "libsquish",
+      "version": "1.15#14"
+    }
+  ]
+}

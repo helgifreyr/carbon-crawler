@@ -1,0 +1,39 @@
+{
+  "default-registry": {
+    "kind": "git",
+    "baseline": "242ac6932a9cd2607332969129e9572516f28d65",
+    "repository": "https://github.com/microsoft/vcpkg.git"
+  },
+  "registries": [
+    {
+      "kind": "git",
+      "repository": "https://github.com/carbonengine/vcpkg-registry.git",
+      "baseline": "7b2c2b56dc4d5e0f1f4886539f570e2d94b2b46c",
+      "packages": [
+        "python3",
+        "carbon-*",
+        "tracy",
+        "greenlet",
+        "ccp-debug-info",
+        "crashpad",
+        "zlib",
+        "re2c",
+        "amd-fidelityfx",
+        "amd-fidelityfx-cacao",
+        "amd-fidelityfx-cas",
+        "amd-fidelityfx-fsr",
+        "fxc",
+        "granny",
+        "intel-xess",
+        "nvidia-aftermath",
+        "nvidia-streamline",
+        "openvdb",
+        "wwise"
+      ]
+    }
+  ],
+  "overlay-triplets": [
+    "triplets",
+    "vendor/vcpkg-registry/triplets"
+  ]
+}

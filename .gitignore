@@ -1,0 +1,27 @@
+# Rebuilt by install_deps.sh
+vendor/
+vcpkg_installed/
+install.log
+
+# Build output, run folders and test captures
+.run/
+dist/
+demo/out/
+res/graphics/effect.dx11/
+
+# pip --target install used by the raylib viewer (see README)
+demo/_deps/
+
+# Written at runtime by Trinity / the GPU driver
+cache/
+NVIDIA Corporation/
+
+__pycache__/
+*.pyc
+
+# MIT-licensed Wwise test banks from carbonengine/audio; fetch with tools/fetch_testbanks.sh
+res/audio/testbanks/
+res/audio/arpg/
+
+# Early engine experiments, kept locally only
+old/
