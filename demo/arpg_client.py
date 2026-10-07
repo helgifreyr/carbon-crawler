@@ -26,6 +26,7 @@ from arpg_menu import (BACKDROP, DEFAULT_BINDINGS, Box, LevelUpButton, Menu, Orb
 from arpg_ui import Banner, BossBar, FloatingNumbers, WorldBars, projector
 from predict import OwnBallPredictor
 from scene import add_ball
+from arpg_map import Level
 from netsim import NetSim
 from stats import Samples, TickTimer
 
@@ -122,7 +123,9 @@ class ArpgSim(NetSim):
 
     def _on_message(self, message):
         kind = message[0]
-        if kind == "score":
+        if kind == "hello" and "level" in self.client.world:
+            world.set_level(Level.from_payload(self.client.world["level"]))
+        elif kind == "score":
             self.kills, self.enemies_alive = message[1], message[2]
         elif kind in ("state", "state_full"):
             self.state.receive(message)
@@ -460,6 +463,8 @@ class ArpgViewer(TrinityViewer):
         self.mesh_timer.begin()
         if PROFILE is not None:
             PROFILE.enable()
+        if self.stage.level is not world.LEVEL and "level" in self.sim.client.world:
+            self.stage.build_level(world.LEVEL)
         self.actors.sync(self.sim.tracked, alpha, dt, self.aims(alpha))
         self.actors.sync_loot({k: e for k, e in self.sim.state.entities.items()
                                if isinstance(k, int) and k >= world.LOOT_BASE and "loot" in e})

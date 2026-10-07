@@ -1,7 +1,9 @@
 import os
 
-from arpg_layout import (BOUNDS, BOXES, ENEMY_RADIUS, GATES, PLAYER_RADIUS, PROJECTILE_RADIUS, ROOMS, SHRINE, SHRINE_RANGE,
-                         WALL_BASE_Y, WALL_H, WALL_T, room_at)
+import arpg_layout
+from arpg_layout import (ENEMY_RADIUS, PLAYER_RADIUS, PROJECTILE_RADIUS, PROP_SIZE, SHRINE_HALF, SHRINE_RANGE, WALL_BASE_Y,
+                         WALL_H)
+from arpg_map import Level
 
 ROOM = 1
 # Each gate is a ball of its own holding one collision box. Moving a ball leaves its boxes where they were, so a gate
@@ -160,9 +162,41 @@ PROJECTILE_AGILITY = 0.01 * FRICTION_OVER_MASS
 
 
 
+# The level being played, and what follows from it; set_level replaces them all. Every process starts on the test level:
+# the server may pick another, and clients take whatever the server sends.
+LEVEL = ROOMS = GATES = BOXES = BOUNDS = SHRINE = None
+
+
+def set_level(level):
+    """Makes level the one every box test, room lookup and gate here refers to."""
+    global LEVEL, ROOMS, GATES, BOXES, BOUNDS, SHRINE, _index
+    LEVEL, ROOMS, GATES, SHRINE = level, level.rooms, level.gates, level.shrine
+    BOUNDS = level.cells.extent
+    props = [(x - PROP_SIZE[k] / 2, z - PROP_SIZE[k] / 2, x + PROP_SIZE[k] / 2, z + PROP_SIZE[k] / 2)
+             for k, x, z, _ in level.props if k in PROP_SIZE]
+    shrine = [(SHRINE[0] - SHRINE_HALF, SHRINE[1] - SHRINE_HALF, SHRINE[0] + SHRINE_HALF, SHRINE[1] + SHRINE_HALF)]         if SHRINE else []
+    BOXES = level.cells.wall_boxes() + props + shrine
+    _index = {}
+    for box in BOXES:
+        for i in range(int((box[0] - 1.0) // INDEX_CELL), int((box[2] + 1.0) // INDEX_CELL) + 1):
+            for j in range(int((box[1] - 1.0) // INDEX_CELL), int((box[3] + 1.0) // INDEX_CELL) + 1):
+                _index.setdefault((i, j), []).append(box)
+    shut_gates.clear()
+    shut_gates.update(gate_ids())
+
+
+def room_at(x, z, margin=0.0):
+    """The index of the room whose floor contains (x, z), at least margin in from its walls, or None."""
+    for i, room in enumerate(ROOMS):
+        x0, z0, x1, z1 = room["rect"]
+        if x0 + margin <= x <= x1 - margin and z0 + margin <= z <= z1 - margin:
+            return i
+    return None
+
+
 def world_description():
     return {"destiny_settings": DESTINY_SETTINGS, "static_ball": ROOM, "boxes": BOXES, "wall_height": WALL_H,
-            "gates": {GATE_BASE + i: box for i, box in enumerate(GATES)}}
+            "gates": {GATE_BASE + i: box for i, box in enumerate(GATES)}, "level": LEVEL.payload()}
 
 
 def apply_settings():
@@ -201,7 +235,7 @@ def gate_ids():
 
 
 # Which gates are shut, for the box tests below; each process updates it from its own park with sync_gates.
-shut_gates = set(gate_ids())
+shut_gates = set()
 
 
 def sync_gates(park, mirror=None, add_ball=None):
@@ -235,10 +269,6 @@ def room_rect(index):
 # Static boxes bucketed into INDEX_CELL squares, so a point test only looks at the boxes near it.
 INDEX_CELL = 4.0
 _index = {}
-for _box in BOXES:
-    for _i in range(int((_box[0] - 1.0) // INDEX_CELL), int((_box[2] + 1.0) // INDEX_CELL) + 1):
-        for _j in range(int((_box[1] - 1.0) // INDEX_CELL), int((_box[3] + 1.0) // INDEX_CELL) + 1):
-            _index.setdefault((_i, _j), []).append(_box)
 
 
 def boxes_near(x, z, pad=0.0):
@@ -283,3 +313,6 @@ def segment_hits_box(ax, az, bx, bz, radius):
         if inside_box(ax + (bx - ax) * t, az + (bz - az) * t, radius):
             return True
     return False
+
+
+set_level(arpg_layout.test_level())

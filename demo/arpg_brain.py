@@ -20,6 +20,14 @@ RAIN = world.KINDS["warlord"]["rain"]
 _nav = None
 
 
+def nav():
+    """The navigation grid for the level being played, rebuilt when the level changes."""
+    global _nav
+    if _nav is None or _nav.level is not world.LEVEL:
+        _nav = Nav()
+    return _nav
+
+
 class NetActs:
     """Acts as plain messages to the server."""
 
@@ -62,8 +70,6 @@ class Brain:
     between waves walks to the shrine to ready up. Upgrades are spent as soon as they arrive."""
 
     def __init__(self, client, state, acts, rng):
-        global _nav
-        _nav = _nav or Nav()
         self.client, self.state, self.acts, self.rng = client, state, acts, rng
         self.next_cast = 0
         self.route, self.goal, self.replan_at = [], None, 0
@@ -111,7 +117,7 @@ class Brain:
         now = self._now()
         self.moving = True
         if self.goal is None or math.hypot(self.goal[0] - x, self.goal[1] - z) > 1.5 or now >= self.replan_at:
-            self.route, self.goal = _nav.path(own.x, own.z, x, z), (x, z)
+            self.route, self.goal = nav().path(own.x, own.z, x, z), (x, z)
             self.replan_at = now + int(REPLAN_S * 1e7)
         while len(self.route) > 1 and math.hypot(self.route[0][0] - own.x, self.route[0][1] - own.z) < 0.7:
             self.route.pop(0)
@@ -126,7 +132,7 @@ class Brain:
         for turn in (0, 30, -30, 60, -60, 90, -90, 135, -135, 180):
             a = math.radians(turn)
             dx, dz = ax * math.cos(a) - az * math.sin(a), ax * math.sin(a) + az * math.cos(a)
-            if _nav.clear(own.x, own.z, own.x + dx * 2.0, own.z + dz * 2.0):
+            if nav().clear(own.x, own.z, own.x + dx * 2.0, own.z + dz * 2.0):
                 return dx, dz
         return ax, az
 

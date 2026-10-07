@@ -115,7 +115,7 @@ class NetClient:
             self._on_probe(message[1], message[2])
         elif kind == "pong":
             self.rtt_ms.add(blue.os.TimeDiffInUs(message[1], blue.os.GetWallclockTimeNow()) / 1000.0)
-        elif kind not in ("hello",):
+        elif kind != "hello":
             for listener in self.message_listeners:
                 listener(message)
         if kind == "hello":
@@ -128,6 +128,8 @@ class NetClient:
             self.sync.ticker.catch_up_backlog = self.lead_window[1] + 1
             self.park.tickInterval = self.tick_ms
             self.park.Start()
+            for listener in self.message_listeners:
+                listener(message)
 
     def _on_set_state(self):
         self.stats["set_states"] += 1

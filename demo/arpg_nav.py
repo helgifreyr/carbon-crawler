@@ -10,6 +10,7 @@ CLEARANCE = world.PLAYER_RADIUS + 0.2
 
 class Nav:
     def __init__(self):
+        self.level = world.LEVEL
         self.x0, self.z0, x1, z1 = world.BOUNDS
         self.nx, self.nz = int((x1 - self.x0) / CELL), int((z1 - self.z0) / CELL)
         # The grid leaves the gates out; cells a gate covers are looked up in self.gate_at while it is shut.

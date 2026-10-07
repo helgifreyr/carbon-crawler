@@ -24,8 +24,12 @@ from arpg_world import KINDS, SPELLS
 
 FROST_RANGE, METEOR_RADIUS = SPELLS["frost"]["range"], SPELLS["meteor"]["radius"]
 NOVA_RADIUS, SLAM_RADIUS = SPELLS["nova"]["radius"], KINDS["brute"]["slam"]["radius"]
-from arpg_layout import (BOUNDS, CORRIDORS, DOOR_HALF, FLOOR_Y, LIGHTMAP_PX_PER_M, LIGHTMAP_RECT, PROPS, ROOMS, TORCHES,
-                         WALL_BASE_Y, WALL_BOXES, WALL_H, WALL_OUTSIDE, WALL_T)
+from arpg_layout import DOOR_HALF, FLOOR_Y, LIGHTMAP_PX_PER_M, WALL_BASE_Y, WALL_H, test_level
+from arpg_map import CELL
+
+# The fixed test level: its torch light is baked here, and every placeable's LightMapRect defaults to its extent.
+TEST_LEVEL = test_level()
+LIGHTMAP_RECT = TEST_LEVEL.cells.extent
 
 OUT = os.path.join(ROOT, "res", "arpg")
 PREVIEW = os.path.join(ROOT, "demo", "out", "arpg_assets_preview.png")
@@ -228,6 +232,12 @@ class Model:
                  Matrix.Diagonal((-1.0, 1.0, 1.0, 1.0)) @ matrix, bone=bone, **kw)
 
     def export(self, path, name, uv_fn=None, layer="base"):
+        positions, normals, uvs, indices = self.mesh_data(uv_fn, layer)
+        cmf.write_mesh(path, positions, normals, uvs, indices, name=name)
+        return len(indices) // 3
+
+    def mesh_data(self, uv_fn=None, layer="base"):
+        """Triangle-list positions, normals, uvs and indices in engine coordinates."""
         bm = self.layers[layer].copy()
         if self.scale != 1.0:
             bm.transform(self.scale_matrix())
@@ -253,8 +263,7 @@ class Model:
                 # Blender images are stored bottom-up; Direct3D's v=0 is the top row.
                 uvs.append((u, 1.0 - v))
         bm.free()
-        cmf.write_mesh(path, positions, normals, uvs, indices, name=name)
-        return len(indices) // 3
+        return positions, normals, uvs, indices
 
 
 def cone(r1, r2, depth, segments=16):
@@ -809,15 +818,16 @@ def build_torch():
     return m
 
 
-def torch_lightmap():
-    """Top-down torch light over LIGHTMAP_RECT, with hard 2D shadows from every wall box, softened by a blur."""
-    x0, z0, x1, z1 = LIGHTMAP_RECT
+def torch_lightmap(level):
+    """Top-down torch light over a level's extent, with hard 2D shadows from every wall box, softened by a blur."""
+    x0, z0, x1, z1 = level.cells.extent
+    walls = level.cells.wall_boxes()
     w, h = int((x1 - x0) * LIGHTMAP_PX_PER_M), int((z1 - z0) * LIGHTMAP_PX_PER_M)
     xs = x0 + (np.arange(w) + 0.5) / LIGHTMAP_PX_PER_M
     zs = z0 + (np.arange(h) + 0.5) / LIGHTMAP_PX_PER_M
     light = np.zeros((h, w))
     with np.errstate(divide="ignore", invalid="ignore"):
-        for tx, tz, _ in TORCHES:
+        for tx, tz, _ in level.torches:
             # Only the pixels and walls within the torch's reach matter.
             i0, i1 = np.searchsorted(xs, tx - TORCH_REACH_M), np.searchsorted(xs, tx + TORCH_REACH_M)
             j0, j1 = np.searchsorted(zs, tz - TORCH_REACH_M), np.searchsorted(zs, tz + TORCH_REACH_M)
@@ -825,7 +835,7 @@ def torch_lightmap():
             dx, dz = tx - gx, tz - gz
             falloff = np.clip(1.0 - np.hypot(dx, dz) / TORCH_REACH_M, 0.0, 1.0) ** 1.8
             lit = np.ones_like(falloff, dtype=bool)
-            for bx0, bz0, bx1, bz1 in WALL_BOXES:
+            for bx0, bz0, bx1, bz1 in walls:
                 if bx1 < tx - TORCH_REACH_M or bx0 > tx + TORCH_REACH_M or bz1 < tz - TORCH_REACH_M or bz0 > tz + TORCH_REACH_M:
                     continue
                 ax, bx = (bx0 - gx) / dx, (bx1 - gx) / dx
@@ -849,81 +859,66 @@ def build_projectile():
     return m
 
 
-def build_floor():
-    """Every room's and corridor's floor, running under the walls around it."""
+def kit_wall():
+    """One wall cell, centred on the origin: a bevelled block whose seams read as courses of big stones."""
     m = Model()
-    # Room floors reach under their walls; corridor floors fill the gap between, without overlapping them.
-    rects = [(x0 - WALL_T, z0 - WALL_T, x1 + WALL_T, z1 + WALL_T) for x0, z0, x1, z1 in (r["rect"] for r in ROOMS)]
-    rects += [(x0 + WALL_T, z0 - WALL_T, x1 - WALL_T, z1 + WALL_T) for x0, z0, x1, z1 in CORRIDORS]
-    for x0, z0, x1, z1 in rects:
-        m.add(box(x1 - x0, z1 - z0, 0.1), 0, at((x0 + x1) / 2, -(z0 + z1) / 2, FLOOR_Y - 0.05), smooth=False)
+    m.add(box(CELL, CELL, WALL_H, 0.05), 0, at(0, 0, WALL_BASE_Y + WALL_H / 2), smooth=False)
     return m
 
 
-def build_walls():
+def kit_floor():
     m = Model()
-    top = WALL_BASE_Y + WALL_H
-    for index, (x0, z0, x1, z1) in enumerate(WALL_BOXES):
-        # Layout z is the engine's Z, which is Blender -Y.
-        cx, cy, w, d = (x0 + x1) / 2, -(z0 + z1) / 2, x1 - x0, z1 - z0
-        m.add(box(w, d, WALL_H, 0.05), 0, at(cx, cy, WALL_BASE_Y + WALL_H / 2), smooth=False)
-        m.add(box(w + 0.16, d + 0.16, 0.16, 0.04), 0, at(cx, cy, top + 0.06), smooth=False)
-        m.add(box(w + 0.18, d + 0.18, 0.24, 0.04), 0, at(cx, cy, FLOOR_Y + 0.1), smooth=False)
-        if WALL_OUTSIDE[index] is None:
-            continue
-        # Outer walls: battlements along the top, buttresses on the outside face (layout z is Blender -Y).
-        ox, oy = WALL_OUTSIDE[index][0], -WALL_OUTSIDE[index][1]
-        along_x = w > d
-        length = w if along_x else d
-        for k in range(int(length / 1.4)):
-            u = -length / 2 + 0.7 + k * 1.4
-            px, py = (cx + u, cy) if along_x else (cx, cy + u)
-            m.add(box(0.7 if along_x else w + 0.16, d + 0.16 if along_x else 0.7, 0.36, 0.03), 0,
-                  at(px, py, top + 0.32), smooth=False)
-        for k in range(int(length / 6.0) + 1):
-            u = -length / 2 + 1.0 + k * (length - 2.0) / max(1, int(length / 6.0))
-            px, py = (cx + u, cy + oy * (d / 2 + 0.3)) if along_x else (cx + ox * (w / 2 + 0.3), cy + u)
-            m.add(box(0.8 if along_x else 0.6, 0.6 if along_x else 0.8, WALL_H - 0.3, 0.05), 0,
-                  at(px, py, WALL_BASE_Y + (WALL_H - 0.3) / 2), smooth=False)
+    m.add(box(CELL, CELL, 0.1), 0, at(0, 0, FLOOR_Y - 0.05), smooth=False)
     return m
 
 
-def build_props():
-    """Crates and barrels from arpg_layout.PROPS (they collide as boxes), plus loose rubble in the corners."""
+def kit_crate():
     m = Model()
     f = FLOOR_Y
-    for kind, x, z, yaw in PROPS:
-        place = at(x, -z, f, rz=yaw)
-        if kind == "crate":
-            m.add(box(0.86, 0.86, 0.86, 0.02), PLANK, place @ at(0, 0, 0.43), smooth=False)
-            for sx in (-1, 1):
-                for sy in (-1, 1):
-                    m.add(box(0.1, 0.1, 0.9, 0.01), PLANK_DARK, place @ at(sx * 0.4, sy * 0.4, 0.45), smooth=False)
-            m.add(box(0.9, 0.9, 0.1, 0.01), PLANK_DARK, place @ at(0, 0, 0.45), smooth=False)
-        else:
-            m.add(lathe([(0.0, 0.0), (0.3, 0.0), (0.36, 0.25), (0.38, 0.5), (0.36, 0.75), (0.3, 1.0), (0.0, 1.0)], 20),
-                  PLANK, place)
-            for h, r in ((0.16, 0.345), (0.84, 0.345)):
-                m.add(lathe([(0.0, h - 0.035), (r, h - 0.035), (r, h + 0.035), (0.0, h + 0.035)], 20), IRON, place)
-    rng = np.random.default_rng(11)
-    for room in ROOMS:
-        x0, z0, x1, z1 = room["rect"]
-        cx, cz, hx, hz = (x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (z1 - z0) / 2
-        for sx, sz in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
-            for _ in range(7):
-                rx = cx + sx * (hx - rng.uniform(1.6, 3.2))
-                rz = cz + sz * (hz - rng.uniform(0.3, 2.2))
-                size = rng.uniform(0.06, 0.16)
-                m.add(ico(size, 1), STONE, at(rx, -rz, f + size * 0.4, 1.0, rng.uniform(0.7, 1.3), 0.6,
-                                            rz=rng.uniform(0, 3)), smooth=False)
+    m.add(box(0.86, 0.86, 0.86, 0.02), PLANK, at(0, 0, f + 0.43), smooth=False)
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            m.add(box(0.1, 0.1, 0.9, 0.01), PLANK_DARK, at(sx * 0.4, sy * 0.4, f + 0.45), smooth=False)
+    m.add(box(0.9, 0.9, 0.1, 0.01), PLANK_DARK, at(0, 0, f + 0.45), smooth=False)
     return m
 
 
-def build_ground():
-    x0, z0, x1, z1 = BOUNDS
+def kit_barrel():
     m = Model()
-    m.add(box(x1 - x0 + 160, z1 - z0 + 140, 0.1), 0, at((x0 + x1) / 2, -(z0 + z1) / 2, FLOOR_Y - 0.07), smooth=False)
+    place = at(0, 0, FLOOR_Y)
+    m.add(lathe([(0.0, 0.0), (0.3, 0.0), (0.36, 0.25), (0.38, 0.5), (0.36, 0.75), (0.3, 1.0), (0.0, 1.0)], 20), PLANK, place)
+    for h, r in ((0.16, 0.345), (0.84, 0.345)):
+        m.add(lathe([(0.0, h - 0.035), (r, h - 0.035), (r, h + 0.035), (0.0, h + 0.035)], 20), IRON, place)
     return m
+
+
+def kit_rubble():
+    """A loose scatter of small stones about a metre across."""
+    m = Model()
+    rng = np.random.default_rng(11)
+    for _ in range(7):
+        size = rng.uniform(0.06, 0.16)
+        m.add(ico(size, 1), STONE, at(rng.uniform(-0.6, 0.6), rng.uniform(-0.6, 0.6), FLOOR_Y + size * 0.4, 1.0,
+                                      rng.uniform(0.7, 1.3), 0.6, rz=rng.uniform(0, 3)), smooth=False)
+    return m
+
+
+# The dungeon kit: pieces the client places per cell or per prop and merges into meshes. Pieces with a scale take
+# world-space UVs at that scale (so neighbours' textures line up); the rest keep their palette UVs.
+KIT = {"wall": (kit_wall, 1.5), "floor": (kit_floor, 4.0), "crate": (kit_crate, None), "barrel": (kit_barrel, None),
+       "rubble": (kit_rubble, None)}
+
+
+def write_kit(path):
+    pieces = {}
+    for name, (build, scale) in KIT.items():
+        positions, normals, uvs, indices = build().mesh_data()
+        pieces[name] = {"world_uv": scale, "positions": [round(c, 5) for p in positions for c in p],
+                        "normals": [round(c, 5) for n in normals for c in n],
+                        "uvs": [round(c, 5) for t in uvs for c in t], "indices": indices}
+    with open(path, "w") as f:
+        json.dump(pieces, f, separators=(",", ":"))
+    return {name: len(p["indices"]) // 3 for name, p in pieces.items()}
 
 
 def build_gate():
@@ -1193,7 +1188,7 @@ def red_meshes(mesh, texture, glow_params=GLOW, ao=True, shadow=True, halo=None)
 
 # Code a character bake runs, besides the model and clips themselves.
 BAKE_CODE = [os.path.join(HERE, f) for f in ("arpg_rig.py", "arpg_bake.py")] + \
-            [os.path.join(ROOT, "tools", f) for f in ("cmf.py", "dds.py")]
+            [os.path.join(ROOT, "demo", "cmf.py"), os.path.join(ROOT, "tools", "dds.py")]
 
 
 def character_inputs(model, clips, colors):
@@ -1259,7 +1254,7 @@ def main():
     save_image("flat_n", np.concatenate([np.full((4, 4, 2), 0.5), np.ones((4, 4, 1)), np.full((4, 4, 1), 0.25)], axis=2))
     save_image("blob", blob_pixels())
     save_image("halo", halo_pixels())
-    save_image("torchlight", torch_lightmap())
+    save_image("torchlight", torch_lightmap(TEST_LEVEL))
 
     meshes = os.path.join(OUT, "meshes")
     player, enemy, shaman, bolt = build_player(), build_enemy(), build_shaman(), build_projectile()
@@ -1291,11 +1286,13 @@ def main():
         heights[name] = counts[name]["vat"][1]
         with open(stamp, "w", newline="\n") as f:
             f.write(fingerprint + "\n")
-    counts["floor"] = build_floor().export(os.path.join(meshes, "floor.cmf"), "floor", world_uv(4.0))
-    counts["walls"] = build_walls().export(os.path.join(meshes, "walls.cmf"), "walls", world_uv(1.5))
-    counts["props"] = build_props().export(os.path.join(meshes, "props.cmf"), "props")
+    os.makedirs(os.path.join(OUT, "kits"), exist_ok=True)
+    # A plain floor slab for the model, animation and effect sheets; the game builds its floors from the kit.
+    sheet_floor = Model()
+    sheet_floor.add(box(40.0, 40.0, 0.1), 0, at(0, 0, FLOOR_Y - 0.05), smooth=False)
+    sheet_floor.export(os.path.join(meshes, "floor.cmf"), "floor", world_uv(4.0))
+    counts["kit"] = write_kit(os.path.join(OUT, "kits", "dungeon.json"))
     counts["gate"] = build_gate().export(os.path.join(meshes, "gate.cmf"), "gate")
-    build_ground().export(os.path.join(meshes, "ground.cmf"), "ground", world_uv(6.0))
 
     for variant in PALETTES:
         glow = (0.6, 0.0, 0.0, 0.0) if variant == "dead" else GLOW
@@ -1354,15 +1351,9 @@ def main():
     for name, (count, params) in FX_BURSTS.items():
         write_red(name, {"mesh": "fx_burst%d" % count, "texture": "halo", "effect": FX_BURST_EFFECT,
                          "transparent": True, "params": params})
+    write_red("gate", {"mesh": "gate", "texture": "palette_enemy"})
     write_red("floor", {"mesh": "floor", "texture": "floor", "textures": {"NormalMap": "res:/arpg/textures/floor_n.png"},
                         "params": {"Surface": (1.0, 0.55, 18.0, 0.0)}})
-    write_red("props", {"mesh": "props", "texture": "palette_enemy", "params": {"Occlusion": (0.35, -0.5, 1.0, 0)}})
-    write_red("gate", {"mesh": "gate", "texture": "palette_enemy"})
-    write_red("ground", {"mesh": "ground", "texture": "ground", "textures": {"NormalMap": "res:/arpg/textures/ground_n.png"},
-                         "params": {"Surface": (1.0, 0.3, 14.0, 0.0)}})
-    write_red("walls", {"mesh": "walls", "texture": "wall", "effect": WALL_EFFECT,
-                        "textures": {"NormalMap": "res:/arpg/textures/wall_n.png"},
-                        "params": {"SeeThrough": (0, -1000, 0, 0), "EyePos": (0, 0, 0, 1), "Surface": (1.0, 0.4, 16.0, 0.25)}})
     print("[assets] triangles: %s" % counts)
 
     preview([("player", player, os.path.join(textures, "palette_self.png")),

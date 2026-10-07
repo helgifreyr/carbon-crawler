@@ -14,6 +14,7 @@ import blue
 import arpg_world as world
 import carbonapp
 from arpg_brain import Brain, NetActs
+from arpg_map import Level
 from arpg_state import ClientState
 from net_client import NetClient
 
@@ -36,7 +37,9 @@ class Companion:
             self.brain.warn(key, name, data)
 
     def on_message(self, message):
-        if message[0] in ("state", "state_full"):
+        if message[0] == "hello" and "level" in self.client.world:
+            world.set_level(Level.from_payload(self.client.world["level"]))
+        elif message[0] in ("state", "state_full"):
             self.state.receive(message)
 
     def run(self):

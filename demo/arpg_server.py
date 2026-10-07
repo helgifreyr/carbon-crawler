@@ -72,6 +72,11 @@ class ArpgServer:
 
     def __init__(self):
         world.apply_settings()
+        level = world.LEVEL
+        if level.lightmap is None:
+            # The test level's torchlight is baked by the Blender build.
+            with open(os.path.join(os.path.dirname(HERE), "res", "arpg", "textures", "torchlight.png"), "rb") as f:
+                level.lightmap = {"rect": level.cells.extent, "png": f.read()}
         self.park = ServerPark()
         self.park.tickInterval = TICK_MS
         self.sync = ServerSync(self.park, self._send)
