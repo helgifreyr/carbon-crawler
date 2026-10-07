@@ -1,6 +1,6 @@
 # Carbon Crawler
 
-A small networked action-RPG built on CCP's open-source [Carbon](https://github.com/carbonengine) engine (Blue,
+A small networked action-RPG built on FC's open-source [Carbon](https://github.com/carbonengine) engine (Blue,
 Destiny, Trinity, carbon-io, carbon-audio), using nothing but the public vcpkg registry. It's an engine spike: an attempt
 to make something that plays nothing like EVE (fast, direct control and crowds of animated monsters) on the same stack.
 
