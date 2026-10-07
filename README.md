@@ -104,6 +104,7 @@ sounds need no Wwise authoring. `ARPG_AUDIO=0` mutes the client, and `ARPG_MUSIC
 
 | Command | What |
 |---|---|
+| `run_act_editor.cmd [template]` | The act editor: edit a template's graph (`res/arpg/acts/`) and watch four seeds' maps follow, in layers from the cells down to the karst simulation's fields; P plays the picked seed, F2 saves |
 | `blender -b --factory-startup -P tools/blender/build_arpg_assets.py` | Rebuilds every model, animation and texture in `res/arpg/` |
 | `py -3.12 tools/make_arpg_ui.py` | Redraws the HUD textures in `res/arpg/ui` |
 | `tools/arpg_waves_test.sh [companions] [seconds]` | Headless game: server and AI companions, printing the server's act reports |

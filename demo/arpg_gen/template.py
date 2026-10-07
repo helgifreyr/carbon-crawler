@@ -8,8 +8,13 @@ import os
 TEMPLATES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "res", "arpg", "acts")
 
 
+def path_of(name):
+    """A template's file: a path as given, or a name in res/arpg/acts."""
+    return name if name.endswith(".json") else os.path.join(TEMPLATES, name + ".json")
+
+
 def load(name):
-    with open(os.path.join(TEMPLATES, name + ".json")) as f:
+    with open(path_of(name)) as f:
         return json.load(f)
 
 

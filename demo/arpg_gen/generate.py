@@ -96,18 +96,18 @@ def arena(floor, owner, k, depth, rng):
     return {"cells": [(int(x), int(z)) for z, x in np.argwhere(inside)], "waves": waves}, gates, yaws, inside
 
 
-def generate(template_name, seed, attempts=4):
-    """A Level for the template; tries further seeds if a result fails validation."""
+def generate(template_name, seed, attempts=4, debug=False):
+    """A Level for the template (a name, or a .json path); tries further seeds if a result fails validation."""
     tmpl = template.load(template_name)
     for attempt in range(attempts):
         try:
-            return build(tmpl, seed + 1000 * attempt)
+            return build(tmpl, seed + 1000 * attempt, debug)
         except GenerationFailed as failure:
             print("[gen] %s seed %d rejected: %s" % (template_name, seed + 1000 * attempt, failure))
     raise GenerationFailed("no valid act for %s from seed %d" % (template_name, seed))
 
 
-def build(tmpl, seed):
+def build(tmpl, seed, debug=False):
     rng, nrng = random.Random(seed), np.random.default_rng(seed)
     graph = template.instantiate(tmpl, rng)
     pos, r = layout.place_anchors(graph, rng, tmpl.get("shape", {}).get("aspect", 1.5))
@@ -176,4 +176,8 @@ def build(tmpl, seed):
                       "boss": (bx, bz), "exit": exit_at, "regions": regions,
                       "route": [arena_points.get(k) or world(k) for k in route], "arenas": arenas, "gate_yaws": gate_yaws})
     level.lightmap = light.bake(level)
+    if debug:
+        # What the editor draws: the simulation's fields and the layout behind the cells.
+        level.debug = {"fields": {k: v.astype(np.float32) for k, v in fields.items()}, "owner": owner,
+                       "floor": floor, "pos": pos, "r": r, "nodes": graph.nodes, "edges": graph.edges}
     return level
